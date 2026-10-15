@@ -90,3 +90,9 @@ class FuncCall(ASTNode):
     def __init__(self, name, args):
         self.name = name
         self.args = args
+
+class IncDec(ASTNode):
+    def __init__(self, name, op, prefix):
+        self.name = name
+        self.op = op # '++' or '--'
+        self.prefix = prefix # True for ++x (yields new value), False for x++ (yields old value)

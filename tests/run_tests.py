@@ -19,7 +19,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT.parent / 'compiler'))
 
+from lexer import LexerError  # noqa: E402
 from main import compile_c_code  # noqa: E402
+from parser import ParseError  # noqa: E402
+from semantic import SemanticError  # noqa: E402
 
 TIMEOUT = 10
 
@@ -62,8 +65,10 @@ def check_program(path, workdir):
 def check_error(path, workdir):
     try:
         compile_quietly(path.read_text())
-    except Exception:
+    except (LexerError, ParseError, SemanticError):
         return None
+    except Exception as e:
+        return f"crashed instead of reporting an error: {type(e).__name__}: {e}"
     return "compiled successfully, expected an error"
 
 

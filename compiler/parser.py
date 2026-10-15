@@ -33,14 +33,17 @@ class Parser:
 
     def parse_declaration(self):
         # type ID ...
-        if self.current_token.type in ('INT', 'FLOAT', 'DOUBLE'):
+        if self.current_token.type in ('INT', 'FLOAT', 'DOUBLE', 'VOID'):
             var_type = self.current_token.value
+            line = self.current_token.line
             self.advance()
             name = self.match('ID').value
             
             # could be function, array or var
             if self.current_token.type == 'LPAREN':
                 return self.parse_function_decl(var_type, name)
+            elif var_type == 'void':
+                raise ParseError(f"Variable '{name}' declared void at line {line}")
             elif self.current_token.type == 'LBRACKET':
                 return self.parse_array_decl(var_type, name)
             else:
@@ -51,7 +54,9 @@ class Parser:
     def parse_function_decl(self, return_type, name):
         self.match('LPAREN')
         params = []
-        if self.current_token.type != 'RPAREN':
+        if self.current_token.type == 'VOID' and self.lexer.tokens[self.pos + 1].type == 'RPAREN':
+            self.match('VOID') # f(void) means no parameters
+        elif self.current_token.type != 'RPAREN':
             params.append(self.parse_param())
             while self.current_token.type == 'COMMA':
                 self.match('COMMA')
@@ -66,7 +71,7 @@ class Parser:
             self.advance()
             name = self.match('ID').value
             return (p_type, name)
-        raise ParseError("Expected type in parameter list")
+        raise ParseError(f"Expected type in parameter list at line {self.current_token.line}")
 
     def parse_array_decl(self, var_type, name):
         self.match('LBRACKET')
@@ -138,10 +143,24 @@ class Parser:
     def parse_for(self):
         self.match('FOR')
         self.match('LPAREN')
-        init = self.parse_expr_statement() # Includes SEMI
-        cond = self.parse_expression()
+        # Each of the three clauses may be empty
+        if self.current_token.type in ('INT', 'FLOAT', 'DOUBLE'):
+            var_type = self.current_token.value
+            self.advance()
+            name = self.match('ID').value
+            init = self.parse_var_decl(var_type, name) # Includes SEMI
+        elif self.current_token.type == 'SEMI':
+            self.match('SEMI')
+            init = None
+        else:
+            init = self.parse_expr_statement() # Includes SEMI
+        cond = None
+        if self.current_token.type != 'SEMI':
+            cond = self.parse_expression()
         self.match('SEMI')
-        inc = self.parse_assignment_expr()
+        inc = None
+        if self.current_token.type != 'RPAREN':
+            inc = self.parse_assignment_expr()
         self.match('RPAREN')
         body = self.parse_statement()
         return ForStmt(init, cond, inc, body)
@@ -243,12 +262,23 @@ class Parser:
         return node
 
     def parse_unary(self):
+        if self.current_token.type in ('INC', 'DEC'):
+            op = self.current_token.value
+            self.advance()
+            return IncDec(self.parse_incdec_target(op), op, prefix=True)
         if self.current_token.type in ('MINUS', 'NOT'):
             op = self.current_token.value
             self.advance()
             expr = self.parse_unary()
             return UnaryOp(op, expr)
         return self.parse_primary()
+
+    def parse_incdec_target(self, op):
+        tok = self.current_token
+        if tok.type != 'ID' or self.lexer.tokens[self.pos + 1].type == 'LBRACKET':
+            raise ParseError(f"Operand of '{op}' must be a variable at line {tok.line}")
+        self.advance()
+        return tok.value
 
     def parse_primary(self):
         tok = self.current_token
@@ -275,6 +305,10 @@ class Parser:
                 idx = self.parse_expression()
                 self.match('RBRACKET')
                 return ArrayAccess(tok.value, idx)
+            elif self.current_token.type in ('INC', 'DEC'):
+                op = self.current_token.value
+                self.advance()
+                return IncDec(tok.value, op, prefix=False)
             else:
                 return Var(tok.value)
         elif tok.type == 'LPAREN':
