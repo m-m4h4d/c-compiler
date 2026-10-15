@@ -47,7 +47,6 @@ Expr -> LogicalOr
 
 - Single-dimensional arrays only.
 - Pointers and structs are not supported.
-- Missing short-circuiting in logical operators at the LLVM level (currently evaluates both sides).
 - Only simple typing (implicit promotion between int and float is limited).
 
 ## 5. Compilation Instructions
@@ -68,6 +67,14 @@ The compiler is designed to run in a standard Python 3 environment without exter
    clang output.ll -o output.exe
    ./output.exe
    ```
+
+5. To run the automated test suite (requires `clang` on your PATH):
+
+   ```bash
+   python tests/run_tests.py
+   ```
+
+   Each program in `tests/programs/` is compiled both natively by clang and through this compiler, and the two executables' exit codes must match. Each file in `tests/errors/` must be rejected with a compiler error. Pass a substring to run only matching tests, e.g. `python tests/run_tests.py float`.
 
 ## 6. Test Cases & Output
 

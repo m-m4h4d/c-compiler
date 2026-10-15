@@ -6,14 +6,13 @@ entry:
   store i32 10, i32* %1
   %2 = alloca i32
   store i32 8, i32* %2
-  %3 = alloca i32
-  %4 = load i32, i32* %1
-  %5 = load i32, i32* %2
-  %6 = mul i32 %4, %5
-  store i32 %6, i32* %3
-  %7 = load i32, i32* %3
+  %3 = load i32, i32* %1
+  %4 = load i32, i32* %2
+  %5 = mul i32 %3, %4
+  %6 = alloca i32
+  store i32 %5, i32* %6
+  %7 = load i32, i32* %6
   ret i32 %7
-  ret i32 0
 }
 
 define i32 @loops() {
@@ -25,9 +24,9 @@ entry:
   br label %L1
 L1:
   %3 = load i32, i32* %2
-  %5 = icmp slt i32 %3, 10
-  %4 = zext i1 %5 to i32
-  %6 = icmp ne i32 %4, 0
+  %4 = icmp slt i32 %3, 10
+  %5 = zext i1 %4 to i32
+  %6 = icmp ne i32 %5, 0
   br i1 %6, label %L2, label %L3
 L2:
   %7 = load i32, i32* %1
@@ -44,9 +43,9 @@ L3:
   br label %L4
 L4:
   %13 = load i32, i32* %12
-  %15 = icmp slt i32 %13, 5
-  %14 = zext i1 %15 to i32
-  %16 = icmp ne i32 %14, 0
+  %14 = icmp slt i32 %13, 5
+  %15 = zext i1 %14 to i32
+  %16 = icmp ne i32 %15, 0
   br i1 %16, label %L5, label %L6
 L5:
   %17 = load i32, i32* %1
@@ -60,7 +59,6 @@ L5:
 L6:
   %22 = load i32, i32* %1
   ret i32 %22
-  ret i32 0
 }
 
 define i32 @add(i32 %x_arg, i32 %y_arg) {
@@ -73,7 +71,6 @@ entry:
   %4 = load i32, i32* %2
   %5 = add i32 %3, %4
   ret i32 %5
-  ret i32 0
 }
 
 define i32 @main() {
@@ -83,18 +80,17 @@ entry:
   store i32 10, i32* %2
   %3 = getelementptr i32, i32* %1, i32 1
   store i32 20, i32* %3
-  %4 = alloca i32
-  %5 = getelementptr i32, i32* %1, i32 0
-  %6 = load i32, i32* %5
-  %7 = getelementptr i32, i32* %1, i32 1
-  %8 = load i32, i32* %7
-  %9 = call i32 @add(i32 %6, i32 %8)
-  store i32 %9, i32* %4
-  %10 = load i32, i32* %4
+  %4 = getelementptr i32, i32* %1, i32 0
+  %5 = load i32, i32* %4
+  %6 = getelementptr i32, i32* %1, i32 1
+  %7 = load i32, i32* %6
+  %8 = call i32 @add(i32 %5, i32 %7)
+  %9 = alloca i32
+  store i32 %8, i32* %9
+  %10 = load i32, i32* %9
   %11 = call i32 @arithmetic()
   %12 = add i32 %10, %11
   %13 = call i32 @loops()
   %14 = add i32 %12, %13
   ret i32 %14
-  ret i32 0
 }
