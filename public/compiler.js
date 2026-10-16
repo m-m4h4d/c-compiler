@@ -168,6 +168,7 @@
       case 'AssignStmt': return `AssignStmt ${node.name} ${node.op || ''}=`;
       case 'ArrayAssignStmt': return `ArrayAssignStmt ${node.name}[] ${node.op || ''}=`;
       case 'FuncCall': return `FuncCall ${node.name}`;
+      case 'SwitchCase': return node.value === null ? 'default' : 'case';
       case 'IncDec': return `IncDec ${node.prefix ? node.op + node.name : node.name + node.op}`;
       default: return node.node;
     }
@@ -175,7 +176,7 @@
 
   const isNode = (value) => value && typeof value === 'object' && !Array.isArray(value) && 'node' in value;
   // Lists whose items read naturally without a field label
-  const UNLABELLED_LISTS = new Set(['declarations', 'statements']);
+  const UNLABELLED_LISTS = new Set(['declarations', 'statements', 'cases']);
 
   function childrenOf(node) {
     const children = [];

@@ -30,8 +30,10 @@ def ast_to_data(node):
 
 
 def error_line(message):
-    match = re.search(r'line (\d+)', message)
-    return int(match.group(1)) if match else None
+    # Messages end with the error's own line; earlier mentions point elsewhere
+    # ("Duplicate case value 1 (first used on line 4) at line 6")
+    matches = re.findall(r'line (\d+)', message)
+    return int(matches[-1]) if matches else None
 
 
 def run_pipeline(source, optimize=True):

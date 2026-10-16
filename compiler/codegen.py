@@ -1,6 +1,6 @@
 import struct
 from ast_nodes import *
-from optimizer import Optimizer
+from optimizer import Optimizer, fold_constant
 
 # Higher rank wins when two operand types meet in an expression
 TYPE_RANK = {'i32': 0, 'float': 1, 'double': 2}
@@ -334,6 +334,34 @@ class LLVMGenerator:
         cond_i1 = self.to_i1(cond_val, cond_type)
         self.emit_terminator(f"br i1 {cond_i1}, label %{body_label}, label %{end_label}")
 
+        self.emit_label(end_label)
+
+    def visit_SwitchStmt(self, node):
+        value, value_type = self.visit(node.expr)
+        value = self.convert(value, value_type, 'i32')
+        end_label = self.new_label()
+        case_labels = [self.new_label() for _ in node.cases]
+        default_label = end_label
+        arms = []
+        for case, label in zip(node.cases, case_labels):
+            if case.value is None:
+                default_label = label
+            else:
+                arms.append(f"i32 {fold_constant(case.value).value}, label %{label}")
+        self.emit_terminator(f"switch i32 {value}, label %{default_label} [ {' '.join(arms)} ]")
+
+        # break leaves the switch; continue still belongs to the enclosing loop
+        enclosing_continue = self.loops[-1][0] if self.loops else None
+        self.loops.append((enclosing_continue, end_label))
+        self.enter_scope() # one scope for the whole body, as in C
+        for case, label in zip(node.cases, case_labels):
+            self.emit_terminator(f"br label %{label}") # fall through from the case above
+            self.emit_label(label)
+            for stmt in case.statements:
+                self.visit(stmt)
+        self.emit_terminator(f"br label %{end_label}")
+        self.exit_scope()
+        self.loops.pop()
         self.emit_label(end_label)
 
     def visit_loop_body(self, body, continue_label, break_label):

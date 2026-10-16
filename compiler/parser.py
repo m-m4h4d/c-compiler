@@ -102,19 +102,20 @@ class Parser:
         line = self.match('LBRACE').line
         statements = []
         while self.current_token.type != 'RBRACE' and self.current_token.type != 'EOF':
-            if self.current_token.type in ('INT', 'FLOAT', 'DOUBLE'):
-                # variable declaration inside block
-                var_type = self.current_token.value
-                self.advance()
-                name_tok = self.match('ID')
-                if self.current_token.type == 'LBRACKET':
-                    statements.append(self.parse_array_decl(var_type, name_tok.value, name_tok.line))
-                else:
-                    statements.append(self.parse_var_decl(var_type, name_tok.value, name_tok.line))
-            else:
-                statements.append(self.parse_statement())
+            statements.append(self.parse_block_item())
         self.match('RBRACE')
         return self.at(Block(statements), line)
+
+    def parse_block_item(self):
+        # A declaration or a statement, as allowed directly inside braces
+        if self.current_token.type in ('INT', 'FLOAT', 'DOUBLE'):
+            var_type = self.current_token.value
+            self.advance()
+            name_tok = self.match('ID')
+            if self.current_token.type == 'LBRACKET':
+                return self.parse_array_decl(var_type, name_tok.value, name_tok.line)
+            return self.parse_var_decl(var_type, name_tok.value, name_tok.line)
+        return self.parse_statement()
 
     def parse_statement(self):
         if self.current_token.type == 'IF':
@@ -123,6 +124,11 @@ class Parser:
             return self.parse_while()
         elif self.current_token.type == 'DO':
             return self.parse_do_while()
+        elif self.current_token.type == 'SWITCH':
+            return self.parse_switch()
+        elif self.current_token.type in ('CASE', 'DEFAULT'):
+            tok = self.current_token
+            raise ParseError(f"'{tok.value}' label is not directly inside a switch at line {tok.line}")
         elif self.current_token.type == 'FOR':
             return self.parse_for()
         elif self.current_token.type == 'RETURN':
@@ -167,6 +173,31 @@ class Parser:
         self.match('RPAREN')
         self.match('SEMI')
         return self.at(DoWhileStmt(body, cond), line)
+
+    def parse_switch(self):
+        line = self.match('SWITCH').line
+        self.match('LPAREN')
+        expr = self.parse_expression()
+        self.match('RPAREN')
+        self.match('LBRACE')
+        cases = []
+        while self.current_token.type not in ('RBRACE', 'EOF'):
+            tok = self.current_token
+            if tok.type == 'CASE':
+                self.advance()
+                value = self.parse_expression()
+                self.match('COLON')
+                cases.append(self.at(SwitchCase(value, []), tok.line))
+            elif tok.type == 'DEFAULT':
+                self.advance()
+                self.match('COLON')
+                cases.append(self.at(SwitchCase(None, []), tok.line))
+            elif not cases:
+                raise ParseError(f"Expected 'case' or 'default' at the start of the switch at line {tok.line}")
+            else:
+                cases[-1].statements.append(self.parse_block_item())
+        self.match('RBRACE')
+        return self.at(SwitchStmt(expr, cases), line)
 
     def parse_for(self):
         line = self.match('FOR').line

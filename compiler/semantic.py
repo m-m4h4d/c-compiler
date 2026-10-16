@@ -1,4 +1,5 @@
 from ast_nodes import *
+from optimizer import fold_constant
 
 class SemanticError(Exception):
     def __init__(self, message, line=None):
@@ -40,6 +41,7 @@ class SemanticAnalyzer:
         self.symtab = SymbolTable()
         self.current_function = None
         self.loop_depth = 0
+        self.switch_depth = 0 # break also works inside a switch; continue does not
 
     def analyze(self):
         self.visit(self.ast)
@@ -122,12 +124,41 @@ class SemanticAnalyzer:
         self.loop_depth -= 1
 
     def visit_BreakStmt(self, node):
-        if self.loop_depth == 0:
-            raise SemanticError("'break' outside of a loop", node.line)
+        if self.loop_depth == 0 and self.switch_depth == 0:
+            raise SemanticError("'break' outside of a loop or switch", node.line)
 
     def visit_ContinueStmt(self, node):
         if self.loop_depth == 0:
             raise SemanticError("'continue' outside of a loop", node.line)
+
+    def visit_SwitchStmt(self, node):
+        self.visit(node.expr)
+        seen = {}
+        default_line = None
+        for case in node.cases:
+            if case.value is None:
+                if default_line is not None:
+                    raise SemanticError(f"Second 'default' label in one switch (the first is on line {default_line})", case.line)
+                default_line = case.line
+                continue
+            self.visit(case.value)
+            folded = fold_constant(case.value)
+            if folded is None:
+                raise SemanticError("Case label must be a constant expression", case.line)
+            if folded.val_type != 'int':
+                raise SemanticError("Case label must be an integer constant", case.line)
+            if folded.value in seen:
+                raise SemanticError(f"Duplicate case value {folded.value} (first used on line {seen[folded.value]})", case.line)
+            seen[folded.value] = case.line
+
+        # The whole body is one scope, so a declaration in one case is visible in later ones
+        self.switch_depth += 1
+        self.symtab.enter_scope()
+        for case in node.cases:
+            for stmt in case.statements:
+                self.visit_statement(stmt)
+        self.symtab.exit_scope()
+        self.switch_depth -= 1
 
     def visit_ForStmt(self, node):
         self.symtab.enter_scope()

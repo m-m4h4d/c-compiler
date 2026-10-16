@@ -23,6 +23,9 @@ class Lexer:
         'else': 'ELSE',
         'while': 'WHILE',
         'do': 'DO',
+        'switch': 'SWITCH',
+        'case': 'CASE',
+        'default': 'DEFAULT',
         'for': 'FOR',
         'return': 'RETURN',
         'break': 'BREAK',
@@ -60,6 +63,7 @@ class Lexer:
         ('LBRACKET', r'\['),
         ('RBRACKET', r'\]'),
         ('SEMI',     r';'),
+        ('COLON',    r':'),
         ('COMMA',    r','),
         ('SKIP',     r'[ \t]+'),           # Skip over spaces and tabs
         ('NEWLINE',  r'\n'),               # Line endings

@@ -1,3 +1,4 @@
+import copy
 import math
 from ast_nodes import *
 
@@ -13,6 +14,11 @@ def c_div(lval, rval):
 def c_rem(lval, rval):
     # The remainder takes the sign of the dividend, so (a/b)*b + a%b == a
     return lval - rval * c_div(lval, rval)
+
+def fold_constant(node):
+    """The Number a constant expression folds to, or None. Leaves node untouched."""
+    folded = Optimizer(None).visit(copy.deepcopy(node))
+    return folded if isinstance(folded, Number) else None
 
 class Optimizer:
     def __init__(self, ast):
@@ -48,15 +54,26 @@ class Optimizer:
         return node
 
     def visit_Block(self, node):
+        node.statements = self.optimize_statements(node.statements)
+        return node
+
+    def optimize_statements(self, statements):
         optimized_statements = []
-        for stmt in node.statements:
+        for stmt in statements:
             opt_stmt = self.visit(stmt)
             if opt_stmt:
                 optimized_statements.append(opt_stmt)
             # Dead code elimination: nothing after a return, break or continue can run
             if isinstance(opt_stmt, (ReturnStmt, BreakStmt, ContinueStmt)):
                 break
-        node.statements = optimized_statements
+        return optimized_statements
+
+    def visit_SwitchStmt(self, node):
+        node.expr = self.visit(node.expr)
+        for case in node.cases:
+            case.value = self.visit(case.value)
+            # Each case is cut separately: the next case label is reachable again
+            case.statements = self.optimize_statements(case.statements)
         return node
 
     def visit_IfStmt(self, node):

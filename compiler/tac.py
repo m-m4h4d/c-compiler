@@ -1,4 +1,5 @@
 from ast_nodes import *
+from optimizer import fold_constant
 
 class TACGenerator:
     def __init__(self, ast):
@@ -98,6 +99,28 @@ class TACGenerator:
         cond_val = self.visit(node.condition)
         self.emit(f"if_false {cond_val} goto {label_end}")
         self.emit(f"goto {label_start}")
+        self.emit(f"{label_end}:")
+
+    def visit_SwitchStmt(self, node):
+        value = self.visit(node.expr)
+        label_end = self.new_label()
+        case_labels = [self.new_label() for _ in node.cases]
+        default_label = label_end
+        for case, label in zip(node.cases, case_labels):
+            if case.value is None:
+                default_label = label
+            else:
+                self.emit(f"if {value} == {fold_constant(case.value).value} goto {label}")
+        self.emit(f"goto {default_label}")
+
+        # break leaves the switch; continue still belongs to the enclosing loop
+        enclosing_continue = self.loops[-1][0] if self.loops else None
+        self.loops.append((enclosing_continue, label_end))
+        for case, label in zip(node.cases, case_labels):
+            self.emit(f"{label}:") # falls through from the case above
+            for stmt in case.statements:
+                self.visit(stmt)
+        self.loops.pop()
         self.emit(f"{label_end}:")
 
     def visit_ForStmt(self, node):
