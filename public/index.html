@@ -214,10 +214,11 @@ SEMI    ;</pre>
             <span class="phase-number" aria-hidden="true">3</span>
             <div class="phase-text">
               <h3>Semantic analysis <code>semantic.py</code></h3>
-              <p>Checks every name against a stack of scopes, and catches redeclarations, undeclared names and misused arrays and functions.</p>
+              <p>Checks every name against a stack of scopes and works out the type of every expression, catching undeclared names, redeclarations and mistakes such as <code>%</code> on a <code>double</code>.</p>
             </div>
 <pre class="listing">block scope in main
-  b    int    declared here</pre>
+  b        int    declared here
+  5 + 3    int    int + int, so int</pre>
           </li>
           <li class="phase">
             <span class="phase-number" aria-hidden="true">4</span>

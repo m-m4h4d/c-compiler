@@ -35,7 +35,18 @@ class SymbolTable:
                 return scope[name]
         return None
 
+# Usual arithmetic conversions: the wider operand type wins
+TYPE_RANK = {'int': 0, 'float': 1, 'double': 2}
+
+def wider(left, right):
+    return max(left, right, key=TYPE_RANK.get)
+
 class SemanticAnalyzer:
+    """Checks scoping and declarations, and the type of every expression.
+
+    Expression visitors return the expression's type: 'int', 'float',
+    'double' or 'void' (a call to a void function).
+    """
     def __init__(self, ast):
         self.ast = ast
         self.symtab = SymbolTable()
@@ -95,6 +106,8 @@ class SemanticAnalyzer:
             self.visit(node.init_expr)
 
     def visit_ArrayDecl(self, node):
+        if not isinstance(node.size, int) or node.size <= 0:
+            raise SemanticError(f"Size of array '{node.name}' must be a positive integer, not {node.size}", node.line)
         self.symtab.declare(node.name, node.var_type, is_array=True, size=node.size, line=node.line)
 
     def visit_Block(self, node):
@@ -132,7 +145,7 @@ class SemanticAnalyzer:
             raise SemanticError("'continue' outside of a loop", node.line)
 
     def visit_SwitchStmt(self, node):
-        self.visit(node.expr)
+        self.require_int(self.visit(node.expr), "Switch value", node.line)
         seen = {}
         default_line = None
         for case in node.cases:
@@ -182,7 +195,11 @@ class SemanticAnalyzer:
             raise SemanticError(f"'{node.name}' is a function, not a variable", node.line)
         if var_info.get('is_array'):
             raise SemanticError(f"Cannot assign to array '{node.name}' directly", node.line)
-        self.visit(node.expr)
+        value_type = self.visit(node.expr)
+        if node.op == '%':
+            self.require_int(var_info['type'], f"Target of '%='", node.line)
+            self.require_int(value_type, f"Right side of '%='", node.line)
+        return var_info['type']
 
     def visit_ArrayAssignStmt(self, node):
         var_info = self.symtab.lookup(node.name)
@@ -190,15 +207,31 @@ class SemanticAnalyzer:
             raise SemanticError(f"Undeclared array '{node.name}'", node.line)
         if not var_info.get('is_array'):
             raise SemanticError(f"'{node.name}' is not an array", node.line)
-        self.visit(node.index_expr)
-        self.visit(node.expr)
+        self.require_int(self.visit(node.index_expr), "Array index", node.line)
+        value_type = self.visit(node.expr)
+        if node.op == '%':
+            self.require_int(var_info['type'], f"Target of '%='", node.line)
+            self.require_int(value_type, f"Right side of '%='", node.line)
+        return var_info['type']
+
+    def require_int(self, actual, what, line):
+        if actual != 'int':
+            raise SemanticError(f"{what} must be an integer, not {actual}", line)
 
     def visit_BinOp(self, node):
-        self.visit(node.left)
-        self.visit(node.right)
+        left = self.visit(node.left)
+        right = self.visit(node.right)
+        if node.op == '%':
+            if left != 'int' or right != 'int':
+                raise SemanticError(f"Operands of '%' must be integers, not {left} and {right}", node.line)
+            return 'int'
+        if node.op in ('+', '-', '*', '/'):
+            return wider(left, right)
+        return 'int' # comparisons and logical operators yield 0 or 1
 
     def visit_UnaryOp(self, node):
-        self.visit(node.expr)
+        operand = self.visit(node.expr)
+        return operand if node.op == '-' else 'int'
 
     def visit_IncDec(self, node):
         var_info = self.symtab.lookup(node.name)
@@ -206,6 +239,7 @@ class SemanticAnalyzer:
             raise SemanticError(f"Undeclared variable '{node.name}'", node.line)
         if var_info.get('type') == 'function' or var_info.get('is_array'):
             raise SemanticError(f"Operand of '{node.op}' must be a scalar variable, got '{node.name}'", node.line)
+        return var_info['type']
 
     def visit_Var(self, node):
         var_info = self.symtab.lookup(node.name)
@@ -213,6 +247,10 @@ class SemanticAnalyzer:
             raise SemanticError(f"Undeclared variable '{node.name}'", node.line)
         if var_info.get('type') == 'function':
             raise SemanticError(f"'{node.name}' is a function, not a variable", node.line)
+        if var_info.get('is_array'):
+            # In C the array would decay to a pointer, which this subset doesn't have
+            raise SemanticError(f"Array '{node.name}' can only be used through an element, such as {node.name}[0]", node.line)
+        return var_info['type']
 
     def visit_ArrayAccess(self, node):
         var_info = self.symtab.lookup(node.name)
@@ -220,10 +258,12 @@ class SemanticAnalyzer:
             raise SemanticError(f"Undeclared array '{node.name}'", node.line)
         if not var_info.get('is_array'):
             raise SemanticError(f"'{node.name}' is not an array", node.line)
-        self.visit(node.index_expr)
+        self.require_int(self.visit(node.index_expr), "Array index", node.line)
+        return var_info['type']
 
     def visit_Number(self, node):
-        pass
+        # C floating literals have type double
+        return 'int' if node.val_type == 'int' else 'double'
 
     def visit_FuncCall(self, node, value_used=True):
         func_info = self.symtab.lookup(node.name)
@@ -237,3 +277,4 @@ class SemanticAnalyzer:
             raise SemanticError(f"Result of void function '{node.name}' used as a value", node.line)
         for arg in node.args:
             self.visit(arg)
+        return func_info['return_type']

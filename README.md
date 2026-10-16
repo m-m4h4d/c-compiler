@@ -57,7 +57,7 @@ Primary   -> NUMBER | ID [ '++' | '--' ] | ID '(' [ Expr { ',' Expr } ] ')' | ID
 
 1. **Lexical Analyzer (`lexer.py`)**: Tokenizes the input code using regular expressions to match keywords, numbers, identifiers, and symbols. Comments are skipped while keeping line numbers accurate for error messages.
 2. **Syntax Analyzer (`parser.py`)**: Uses Recursive Descent Parsing to build an Abstract Syntax Tree (AST). It incorporates assignments directly into expressions to support standard C `for` loops.
-3. **Semantic Analyzer (`semantic.py`)**: Traverses the AST with a stack-based Symbol Table to enforce variable scoping, duplicate declarations, array access checks, argument counts, `void` usage and constant global initializers.
+3. **Semantic Analyzer (`semantic.py`)**: Traverses the AST with a stack-based Symbol Table to enforce variable scoping, duplicate declarations, array access checks, argument counts, `void` usage and constant global initializers. It also works out the type of every expression (`int`, `float`, `double` or `void`) using C's usual arithmetic conversions, and rejects what C rejects: `%` on floating-point operands, non-integer array indexes, sizes and `switch` values, and arrays used without an index.
 4. **Optimizer (`optimizer.py`)**: Performs Constant Folding on arithmetic expressions and eliminates dead code (e.g. `if(0)` blocks or `while(0)`). Folding follows C semantics: integer division and remainder truncate toward zero and integer results wrap at 32 bits.
 5. **TAC Generator (`tac.py`)**: A post-order AST traversal to generate flat Three-Address Code with explicit labels and temporaries.
 6. **LLVM Backend (`codegen.py`)**: Traverses the AST to generate standard LLVM Intermediate Representation (`.ll`). Every local variable gets one stack slot (`alloca`) in the function's entry block, accessed through loads and stores; a scope stack resolves shadowed names. `&&` and `||` are lowered to branches joined by a `phi` node so the right operand is only evaluated when needed.
@@ -66,7 +66,8 @@ Primary   -> NUMBER | ID [ '++' | '--' ] | ID '(' [ Expr { ',' Expr } ] ')' | ID
 
 - Single-dimensional arrays only, with no array initializers.
 - Pointers, structs, `char` and string literals are not supported, so there is no I/O; programs report results through their exit code.
-- Expressions are not type-checked during semantic analysis; for example, a floating-point `switch` value is converted to `int` rather than rejected. Case labels must be integer constants.
+- Conversions between `int`, `float` and `double` happen implicitly as in C, without warnings for narrowing (for example, assigning a `double` to an `int`).
+- Zero-length arrays, a GNU extension that clang accepts, are rejected as in ISO C.
 - Floating-point literals need digits before the decimal point (`0.5`, not `.5`) and cannot use exponents (`1e5`).
 - No bounds checking on array accesses.
 
