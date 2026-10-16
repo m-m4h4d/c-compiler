@@ -23,13 +23,8 @@ struct Item *most_valuable(struct Item *items, int n) {
 }
 
 int main() {
-    struct Item stock[3];
-    stock[0].price = 4;
-    stock[0].quantity = 10;
-    stock[1].price = 25;
-    stock[1].quantity = 2;
-    stock[2].price = 9;
-    stock[2].quantity = 7;
+    // price, quantity; each next pointer starts out null
+    struct Item stock[] = {{4, 10}, {25, 2}, {9, 7}};
 
     // Chain the items together: 0 -> 1 -> 2
     for (int i = 0; i < 2; i++) {

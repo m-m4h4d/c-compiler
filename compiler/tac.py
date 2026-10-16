@@ -8,6 +8,7 @@ class TACGenerator:
         self.temp_count = 0
         self.label_count = 0
         self.loops = [] # (continue label, break label) for each enclosing loop
+        self.struct_fields = {} # struct name -> [(type, field)], for spelling out initializers
 
     def new_temp(self):
         self.temp_count += 1
@@ -37,13 +38,15 @@ class TACGenerator:
     def visit_Program(self, node):
         for decl in node.declarations:
             if isinstance(decl, StructDecl):
+                self.struct_fields[decl.name] = decl.fields
                 fields = ', '.join(f"{c_type} {name}" for c_type, name in decl.fields)
                 self.emit(f"struct {decl.name} {{ {fields} }}")
             elif isinstance(decl, VarDecl):
-                init = f" = {self.visit(decl.init_expr)}" if decl.init_expr else ""
+                init = f" = {self.render_constant(decl.init_expr)}" if decl.init_expr else ""
                 self.emit(f"global {decl.name}{init}")
             elif isinstance(decl, ArrayDecl):
-                self.emit(f"global_array {decl.name}, {decl.size}")
+                init = f" = {self.render_constant(decl.init)}" if decl.init else ""
+                self.emit(f"global_array {decl.name}, {decl.size}{init}")
             else:
                 self.visit(decl)
 
@@ -54,13 +57,38 @@ class TACGenerator:
         self.emit(f"end_func")
         self.emit("") # blank line for readability
 
+    def render_constant(self, init):
+        if isinstance(init, InitList):
+            return '{' + ', '.join(self.render_constant(item) for item in init.items) + '}'
+        return self.visit(init)
+
     def visit_VarDecl(self, node):
-        if node.init_expr:
+        if isinstance(node.init_expr, InitList):
+            self.emit(f"clear {node.name}") # members the list leaves out are zero
+            self.emit_init(node.name, node.var_type, node.init_expr)
+        elif node.init_expr:
             val = self.visit(node.init_expr)
             self.emit(f"{node.name} = {val}")
 
     def visit_ArrayDecl(self, node):
         self.emit(f"alloc_array {node.name}, {node.size}")
+        if node.init is not None:
+            self.emit(f"clear {node.name}")
+            self.emit_init(node.name, f"{node.var_type}[{node.size}]", node.init)
+
+    def emit_init(self, target, c_type, init):
+        # One assignment per value in a (fully braced) initializer
+        if not isinstance(init, InitList):
+            self.emit(f"{target} = {self.visit(init)}")
+            return
+        if c_type.endswith(']'):
+            element = c_type[:c_type.rindex('[')]
+            members = [(element, f"{target}[{i}]") for i in range(len(init.items))]
+        else:
+            fields = self.struct_fields[c_type[len('struct '):]]
+            members = [(field_type, f"{target}.{name}") for field_type, name in fields]
+        for (member_type, member_target), item in zip(members, init.items):
+            self.emit_init(member_target, member_type, item)
 
     def visit_Block(self, node):
         for stmt in node.statements:

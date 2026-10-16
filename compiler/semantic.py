@@ -133,9 +133,78 @@ class SemanticAnalyzer:
 
     def visit_Program(self, node):
         for decl in node.declarations:
-            if isinstance(decl, VarDecl) and decl.init_expr and not self.is_constant(decl.init_expr):
-                raise SemanticError(f"Initializer of global variable '{decl.name}' must be a constant expression", decl.line)
             self.visit(decl)
+            init = decl.init_expr if isinstance(decl, VarDecl) else getattr(decl, 'init', None)
+            if init is not None and not self.is_constant_init(init):
+                raise SemanticError(f"Initializer of global variable '{decl.name}' must be a constant expression", decl.line)
+
+    def is_constant_init(self, init):
+        if isinstance(init, InitList):
+            return all(self.is_constant_init(item) for item in init.items)
+        return self.is_constant(init)
+
+    # ---- Initializers
+    # normalize() checks an initializer against its type and returns it fully
+    # braced: one InitList per struct or array, holding one entry per member
+    # in order (trailing members that were left out are zero). Later phases
+    # only ever see this form, so brace elision is handled here alone.
+
+    def is_aggregate_type(self, t):
+        return is_struct(t) or is_array_type(t)
+
+    def members_of(self, t):
+        if is_struct(t):
+            return [(field_type, f"field '{name}'") for name, field_type in self.struct_fields(t).items()]
+        count = int(t[t.rindex('[') + 1:-1])
+        return [(array_element(t), f"element {i}") for i in range(count)]
+
+    def normalize(self, t, init, what, line):
+        if isinstance(init, InitList):
+            if self.is_aggregate_type(t):
+                position = [0]
+                result = self.fill_aggregate(t, init.items, position, what, init.line)
+                if position[0] < len(init.items):
+                    extra = init.items[position[0]]
+                    raise SemanticError(f"{what}: too many values for {t}", extra.line or init.line)
+                return result
+            # A scalar may be wrapped in braces, as in int x = {5};
+            if len(init.items) != 1 or isinstance(init.items[0], InitList):
+                raise SemanticError(f"{what}: {t} takes a single value, not a list of {len(init.items)}", init.line)
+            return self.normalize(t, init.items[0], what, line)
+        if is_array_type(t):
+            raise SemanticError(f"{what}: an array is initialized with a braced list such as {{1, 2}}", line)
+        value = self.visit(init)
+        self.check_assignable(t, value, init, what, line)
+        return init
+
+    def fill_aggregate(self, t, items, position, what, line):
+        # `T[]` is an array whose size the initializer decides
+        unbounded = t.endswith('[]')
+        members = None if unbounded else self.members_of(t)
+        result = []
+        while position[0] < len(items):
+            index = len(result)
+            if unbounded:
+                member_type, description = t[:-2], f"element {index}"
+            elif index < len(members):
+                member_type, description = members[index]
+            else:
+                break # leftover values belong to an enclosing list, or are too many
+            item = items[position[0]]
+            member_what = f"{what}, {description}"
+            if isinstance(item, InitList):
+                position[0] += 1
+                result.append(self.normalize(member_type, item, member_what, item.line))
+            elif self.is_aggregate_type(member_type) and not (is_struct(member_type) and self.visit(item) == member_type):
+                # Brace elision: an aggregate member without its own braces takes
+                # as many of the following values as it needs
+                result.append(self.fill_aggregate(member_type, items, position, member_what, item.line or line))
+            else:
+                position[0] += 1
+                result.append(self.normalize(member_type, item, member_what, item.line or line))
+        normalized = InitList(result)
+        normalized.line = line
+        return normalized
 
     def is_constant(self, node):
         if isinstance(node, Number):
@@ -188,14 +257,20 @@ class SemanticAnalyzer:
     def visit_VarDecl(self, node):
         self.check_type(node.var_type, f"Variable '{node.name}'", node.line)
         self.symtab.declare(node.name, node.var_type, line=node.line)
-        if node.init_expr:
-            value = self.visit(node.init_expr)
-            self.check_assignable(node.var_type, value, node.init_expr, f"Initializer of '{node.name}'", node.line)
+        if node.init_expr is not None:
+            node.init_expr = self.normalize(node.var_type, node.init_expr, f"Initializer of '{node.name}'", node.line)
 
     def visit_ArrayDecl(self, node):
-        if not isinstance(node.size, int) or node.size <= 0:
+        if node.size is not None and (not isinstance(node.size, int) or node.size <= 0):
             raise SemanticError(f"Size of array '{node.name}' must be a positive integer, not {node.size}", node.line)
         self.check_type(node.var_type, f"Array '{node.name}'", node.line)
+        if node.init is not None:
+            array_type = f"{node.var_type}[{'' if node.size is None else node.size}]"
+            node.init = self.normalize(array_type, node.init, f"Initializer of '{node.name}'", node.line)
+            if node.size is None:
+                node.size = len(node.init.items)
+                if node.size == 0:
+                    raise SemanticError(f"Array '{node.name}' needs at least one element", node.line)
         self.symtab.declare(node.name, node.var_type, is_array=True, size=node.size, line=node.line)
 
     def visit_Block(self, node):

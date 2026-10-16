@@ -159,7 +159,8 @@
       case 'FunctionDecl':
         return `FunctionDecl ${node.return_type} ${node.name}(${node.params.map((p) => p.join(' ')).join(', ')})`;
       case 'VarDecl': return `VarDecl ${node.var_type} ${node.name}`;
-      case 'ArrayDecl': return `ArrayDecl ${node.var_type} ${node.name}[${node.size}]`;
+      case 'ArrayDecl': return `ArrayDecl ${node.var_type} ${node.name}[${node.size ?? ''}]`; // [] when the list gives the size
+      case 'InitList': return `InitList {${node.items.length}}`;
       case 'BinOp': return `BinOp ${node.op}`;
       case 'UnaryOp': return `UnaryOp ${node.op}`;
       case 'Number': return `Number ${node.value}`;

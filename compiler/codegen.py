@@ -1,6 +1,6 @@
 import struct
 from ast_nodes import *
-from optimizer import Optimizer, fold_constant
+from optimizer import fold_constant
 
 # Higher rank wins when two operand types meet in an expression
 TYPE_RANK = {'i32': 0, 'float': 1, 'double': 2}
@@ -201,25 +201,51 @@ class LLVMGenerator:
 
     def emit_global_var(self, node):
         llvm_type = self.map_type(node.var_type)
-        init = self.default_value(llvm_type)
-        if node.init_expr:
-            folded = Optimizer(None).visit(node.init_expr)
-            if not isinstance(folded, Number):
-                raise ValueError(f"Codegen: initializer of global '{node.name}' did not fold to a constant")
-            if is_pointer(llvm_type):
-                init = 'null' # the only constant a pointer can start from
-            elif llvm_type == 'i32':
-                init = str(int(folded.value)) # C converts by truncating toward zero
-            else:
-                init = self.float_constant(float(folded.value), llvm_type)
-        self.emit(f"@{node.name} = global {llvm_type} {init}")
+        self.emit(f"@{node.name} = global {llvm_type} {self.constant_init(llvm_type, node.init_expr)}")
         self.globals[node.name] = {'ptr': f"@{node.name}", 'type': llvm_type}
 
     def emit_global_array(self, node):
         llvm_type = self.map_type(node.var_type)
         array_type = f"[{node.size} x {llvm_type}]"
-        self.emit(f"@{node.name} = global {array_type} zeroinitializer")
+        self.emit(f"@{node.name} = global {array_type} {self.constant_init(array_type, node.init)}")
         self.globals[node.name] = {'ptr': f"@{node.name}", 'type': llvm_type, 'array_type': array_type}
+
+    def members(self, llvm_type):
+        """The member types of a struct or array type, in order."""
+        if llvm_type.startswith('%struct.'):
+            fields = self.structs[llvm_type[len('%struct.'):]].values()
+            return [field_type for _, field_type in sorted(fields)]
+        count, element = llvm_type[1:-1].split(' x ', 1)
+        return [element] * int(count)
+
+    def constant_init(self, llvm_type, init):
+        """An LLVM constant for a global's initializer; semantic analysis has made it fully braced."""
+        if init is None:
+            return self.default_value(llvm_type)
+        if isinstance(init, InitList):
+            members = self.members(llvm_type)
+            items = init.items + [None] * (len(members) - len(init.items)) # left out means zero
+            parts = ', '.join(f"{t} {self.constant_init(t, item)}" for t, item in zip(members, items))
+            return f"{{ {parts} }}" if llvm_type.startswith('%struct.') else f"[{parts}]"
+        folded = fold_constant(init)
+        if folded is None:
+            raise ValueError("Codegen: a global initializer did not fold to a constant")
+        if is_pointer(llvm_type):
+            return 'null' # the only constant a pointer can start from
+        if llvm_type == 'i32':
+            return str(int(folded.value)) # C converts by truncating toward zero
+        return self.float_constant(float(folded.value), llvm_type)
+
+    def init_at(self, ptr, llvm_type, init):
+        # Store an initializer into memory that has already been zeroed
+        if not isinstance(init, InitList):
+            val, val_type = self.visit(init)
+            self.store(ptr, llvm_type, val, val_type)
+            return
+        for index, (member_type, item) in enumerate(zip(self.members(llvm_type), init.items)):
+            member_ptr = self.new_reg()
+            self.emit_inst(f"{member_ptr} = getelementptr {llvm_type}, {llvm_type}* {ptr}, i32 0, i32 {index}")
+            self.init_at(member_ptr, member_type, item)
 
     def visit_FunctionDecl(self, node):
         ret_type = self.map_type(node.return_type)
@@ -268,6 +294,11 @@ class LLVMGenerator:
 
     def visit_VarDecl(self, node):
         llvm_type = self.map_type(node.var_type)
+        if isinstance(node.init_expr, InitList):
+            ptr = self.new_slot(node.name, llvm_type)
+            self.initialize_aggregate(ptr, llvm_type, node.init_expr)
+            self.declare(node.name, {'ptr': ptr, 'type': llvm_type})
+            return
         # Evaluate the initializer before declaring, so `int x = x;` in a nested
         # scope reads the outer x
         init = self.visit(node.init_expr) if node.init_expr else None
@@ -282,7 +313,15 @@ class LLVMGenerator:
         llvm_type = self.map_type(node.var_type)
         array_type = f"[{node.size} x {llvm_type}]"
         ptr = self.new_slot(node.name, array_type)
+        if node.init is not None:
+            self.initialize_aggregate(ptr, array_type, node.init)
         self.declare(node.name, {'ptr': ptr, 'type': llvm_type, 'array_type': array_type})
+
+    def initialize_aggregate(self, ptr, llvm_type, init):
+        # Zero everything first, so members the list leaves out are 0, as in C.
+        # This runs each time the declaration does, e.g. on every loop iteration.
+        self.emit_inst(f"store {llvm_type} zeroinitializer, {llvm_type}* {ptr}")
+        self.init_at(ptr, llvm_type, init)
 
     def element_type(self, var_info):
         # name[i] reads an array's element type, or what a pointer points to

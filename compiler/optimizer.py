@@ -51,6 +51,11 @@ class Optimizer:
         return node
 
     def visit_ArrayDecl(self, node):
+        node.init = self.visit(node.init)
+        return node
+
+    def visit_InitList(self, node):
+        node.items = [self.visit(item) for item in node.items]
         return node
 
     def visit_Block(self, node):

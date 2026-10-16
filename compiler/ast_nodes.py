@@ -24,10 +24,15 @@ class VarDecl(ASTNode):
         self.init_expr = init_expr
 
 class ArrayDecl(ASTNode):
-    def __init__(self, var_type, name, size):
+    def __init__(self, var_type, name, size, init=None):
         self.var_type = var_type
         self.name = name
-        self.size = size
+        self.size = size # None for `int a[] = {...}`, until semantic analysis counts the initializer
+        self.init = init # an InitList, or None
+
+class InitList(ASTNode):
+    def __init__(self, items):
+        self.items = items # expressions and nested InitLists, in order
 
 class Block(ASTNode):
     def __init__(self, statements):
