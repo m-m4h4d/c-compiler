@@ -86,6 +86,20 @@ class TACGenerator:
         self.emit(f"goto {label_start}")
         self.emit(f"{label_end}:")
 
+    def visit_DoWhileStmt(self, node):
+        label_start = self.new_label()
+        label_cond = self.new_label()
+        label_end = self.new_label()
+
+        self.emit(f"{label_start}:")
+        # continue goes to the condition, which decides whether to loop again
+        self.visit_loop_body(node.body, label_cond, label_end)
+        self.emit(f"{label_cond}:")
+        cond_val = self.visit(node.condition)
+        self.emit(f"if_false {cond_val} goto {label_end}")
+        self.emit(f"goto {label_start}")
+        self.emit(f"{label_end}:")
+
     def visit_ForStmt(self, node):
         self.visit(node.init)
         label_start = self.new_label()

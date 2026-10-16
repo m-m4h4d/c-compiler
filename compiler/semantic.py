@@ -111,6 +111,11 @@ class SemanticAnalyzer:
         self.visit(node.condition)
         self.visit_loop_body(node.body)
 
+    def visit_DoWhileStmt(self, node):
+        # The body's declarations are out of scope again by the time the condition runs
+        self.visit_loop_body(node.body)
+        self.visit(node.condition)
+
     def visit_loop_body(self, body):
         self.loop_depth += 1
         self.visit_statement(body)

@@ -121,6 +121,8 @@ class Parser:
             return self.parse_if()
         elif self.current_token.type == 'WHILE':
             return self.parse_while()
+        elif self.current_token.type == 'DO':
+            return self.parse_do_while()
         elif self.current_token.type == 'FOR':
             return self.parse_for()
         elif self.current_token.type == 'RETURN':
@@ -155,6 +157,16 @@ class Parser:
         self.match('RPAREN')
         body = self.parse_statement()
         return self.at(WhileStmt(cond, body), line)
+
+    def parse_do_while(self):
+        line = self.match('DO').line
+        body = self.parse_statement()
+        self.match('WHILE')
+        self.match('LPAREN')
+        cond = self.parse_expression()
+        self.match('RPAREN')
+        self.match('SEMI')
+        return self.at(DoWhileStmt(body, cond), line)
 
     def parse_for(self):
         line = self.match('FOR').line

@@ -39,6 +39,11 @@ class WhileStmt(ASTNode):
         self.condition = condition
         self.body = body
 
+class DoWhileStmt(ASTNode):
+    def __init__(self, body, condition):
+        self.body = body
+        self.condition = condition
+
 class ForStmt(ASTNode):
     def __init__(self, init, condition, increment, body):
         self.init = init

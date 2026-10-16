@@ -82,6 +82,12 @@ class Optimizer:
             return None
         return node
 
+    def visit_DoWhileStmt(self, node):
+        # Even with a false condition the body runs once, so the loop is never removed
+        node.body = self.visit(node.body)
+        node.condition = self.visit(node.condition)
+        return node
+
     def visit_ForStmt(self, node):
         node.init = self.visit(node.init)
         node.condition = self.visit(node.condition)

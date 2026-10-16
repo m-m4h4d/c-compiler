@@ -318,6 +318,24 @@ class LLVMGenerator:
 
         self.emit_label(end_label)
 
+    def visit_DoWhileStmt(self, node):
+        body_label = self.new_label()
+        cond_label = self.new_label()
+        end_label = self.new_label()
+
+        # The body runs before the condition is first checked
+        self.emit_terminator(f"br label %{body_label}")
+        self.emit_label(body_label)
+        self.visit_loop_body(node.body, cond_label, end_label)
+        self.emit_terminator(f"br label %{cond_label}")
+
+        self.emit_label(cond_label)
+        cond_val, cond_type = self.visit(node.condition)
+        cond_i1 = self.to_i1(cond_val, cond_type)
+        self.emit_terminator(f"br i1 {cond_i1}, label %{body_label}, label %{end_label}")
+
+        self.emit_label(end_label)
+
     def visit_loop_body(self, body, continue_label, break_label):
         self.loops.append((continue_label, break_label))
         self.visit(body)
