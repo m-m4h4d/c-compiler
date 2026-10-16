@@ -1,4 +1,4 @@
 int main() {
-    void x;
+    void x; // error
     return 0;
 }

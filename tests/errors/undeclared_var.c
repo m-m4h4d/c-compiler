@@ -1,3 +1,3 @@
 int main() {
-    return y;
+    return y; // error
 }

@@ -71,9 +71,10 @@ def run_checks(base):
           and result['error']['phase'] == 'parser' and result['error']['line'] == 3)
     check("a parse error keeps the tokens", 'tokens' in result['stages'] and 'ast' not in result['stages'])
 
-    _, result = compile_source(base, 'int main() { return y; }')
+    _, result = compile_source(base, 'int main() {\n    int x = 1;\n    return y;\n}\n')
     check("a semantic error keeps the AST", result['error']['phase'] == 'semantic'
           and 'ast' in result['stages'] and 'tac' not in result['stages'])
+    check("a semantic error reports its line", result['error']['line'] == 3)
 
     _, result = compile_source(base, 'int main() { return ' + '(' * 5000 + '1' + ')' * 5000 + '; }')
     check("deep nesting is an error, not a crash", not result['ok'] and not result['error']['internal'])

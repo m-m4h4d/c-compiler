@@ -2,6 +2,6 @@ void f() {
 }
 
 int main() {
-    int x = f();
+    int x = f(); // error
     return x;
 }

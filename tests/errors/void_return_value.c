@@ -1,5 +1,5 @@
 void f() {
-    return 1;
+    return 1; // error
 }
 
 int main() {

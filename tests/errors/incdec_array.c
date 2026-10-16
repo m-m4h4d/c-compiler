@@ -1,5 +1,5 @@
 int main() {
     int a[3];
-    a++;
+    a++; // error
     return 0;
 }

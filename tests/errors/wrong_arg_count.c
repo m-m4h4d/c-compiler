@@ -3,5 +3,5 @@ int f(int a) {
 }
 
 int main() {
-    return f(1, 2);
+    return f(1, 2); // error
 }

@@ -1,5 +1,5 @@
 class ASTNode:
-    pass
+    line = None # source line, set by the parser
 
 class Program(ASTNode):
     def __init__(self, declarations):

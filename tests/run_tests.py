@@ -4,7 +4,9 @@ tests/programs/*.c are valid C. Each one is compiled twice: natively with clang
 (the reference) and through our compiler to LLVM IR, which clang then turns into
 an executable. The test passes when both executables exit with the same code.
 
-tests/errors/*.c must be rejected by our compiler with an error.
+tests/errors/*.c must be rejected by our compiler with an error. A file that
+marks a line with a `// error` comment must also have the error reported on
+that line.
 
 The examples shown on the website (public/examples/*.c) are checked the same
 way as tests/programs.
@@ -13,6 +15,7 @@ Usage: python tests/run_tests.py [name-filter]
 """
 import contextlib
 import io
+import re
 import shutil
 import subprocess
 import sys
@@ -66,9 +69,18 @@ def check_program(path, workdir):
 
 
 def check_error(path, workdir):
+    source = path.read_text()
+    marked = [n for n, line in enumerate(source.splitlines(), 1) if '// error' in line]
     try:
-        compile_quietly(path.read_text())
-    except (LexerError, ParseError, SemanticError):
+        compile_quietly(source)
+    except (LexerError, ParseError, SemanticError) as e:
+        if not marked:
+            return None
+        reported = re.search(r'line (\d+)', str(e))
+        if reported is None:
+            return f"error has no line number, expected line {marked[0]}: {e}"
+        if int(reported.group(1)) != marked[0]:
+            return f"error reported on line {reported.group(1)}, expected line {marked[0]}: {e}"
         return None
     except Exception as e:
         return f"crashed instead of reporting an error: {type(e).__name__}: {e}"
