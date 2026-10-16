@@ -1,6 +1,6 @@
 import struct
 from ast_nodes import *
-from optimizer import Optimizer, fold_constant
+from optimizer import fold_constant
 
 # Higher rank wins when two operand types meet in an expression
 TYPE_RANK = {'i32': 0, 'float': 1, 'double': 2}
@@ -15,7 +15,17 @@ def pointee(llvm_type):
 # Bytes per element, for the distance between two pointers
 SIZE_OF = {'i32': 4, 'float': 4, 'double': 8}
 def size_of(llvm_type):
-    return 8 if is_pointer(llvm_type) else SIZE_OF[llvm_type]
+    if is_pointer(llvm_type):
+        return 8
+    if llvm_type in SIZE_OF:
+        return SIZE_OF[llvm_type]
+    # Structs and arrays: let LLVM compute the size (including padding) as the
+    # address of element 1 in an array starting at null
+    return f"ptrtoint ({llvm_type}* getelementptr ({llvm_type}, {llvm_type}* null, i32 1) to i64)"
+
+def is_aggregate(llvm_type):
+    # Struct (%struct.Name) and array ([N x T]) values
+    return not is_pointer(llvm_type) and (llvm_type.startswith('%struct.') or llvm_type.startswith('['))
 
 ICMP_OPS = {'==': 'eq', '!=': 'ne', '<': 'slt', '<=': 'sle', '>': 'sgt', '>=': 'sge'}
 FCMP_OPS = {'==': 'oeq', '!=': 'une', '<': 'olt', '<=': 'ole', '>': 'ogt', '>=': 'oge'}
@@ -32,6 +42,7 @@ class LLVMGenerator:
         self.scopes = [] # stack of dicts mapping var name to {'ptr', 'type', ...}
         self.globals = {}
         self.functions = {} # name -> {'ret': llvm type, 'params': [llvm types]}
+        self.structs = {} # name -> {field: (index, llvm type)}
         self.allocas = [] # stack slots for the current function, placed in its entry block
         self.slot_count = 0
         self.current_ret_type = None
@@ -77,14 +88,23 @@ class LLVMGenerator:
         self.terminated = True
 
     def map_type(self, c_type):
+        if c_type.endswith(']'):
+            # An array field such as 'int[4]' becomes [4 x i32]
+            open_bracket = c_type.rindex('[')
+            return f"[{c_type[open_bracket + 1:-1]} x {self.map_type(c_type[:open_bracket])}]"
         stars = len(c_type) - len(c_type.rstrip('*')) # 'int**' maps to 'i32**'
         base = c_type[:len(c_type) - stars]
-        llvm_base = {'int': 'i32', 'float': 'float', 'double': 'double', 'void': 'void'}.get(base, 'i32')
+        if base.startswith('struct '):
+            llvm_base = f"%struct.{base[len('struct '):]}"
+        else:
+            llvm_base = {'int': 'i32', 'float': 'float', 'double': 'double', 'void': 'void'}.get(base, 'i32')
         return llvm_base + '*' * stars
 
     def default_value(self, llvm_type):
         if is_pointer(llvm_type):
             return 'null'
+        if is_aggregate(llvm_type):
+            return 'zeroinitializer'
         return '0' if llvm_type == 'i32' else '0.0'
 
     def float_constant(self, value, llvm_type):
@@ -158,6 +178,12 @@ class LLVMGenerator:
         return None
 
     def visit_Program(self, node):
+        # Struct layouts come first: every later declaration may refer to them
+        for decl in node.declarations:
+            if isinstance(decl, StructDecl):
+                fields = [(name, self.map_type(c_type)) for c_type, name in decl.fields]
+                self.structs[decl.name] = {name: (i, llvm_type) for i, (name, llvm_type) in enumerate(fields)}
+                self.emit(f"%struct.{decl.name} = type {{ {', '.join(t for _, t in fields)} }}")
         # Collect signatures first so calls know their argument and return types
         for decl in node.declarations:
             if isinstance(decl, FunctionDecl):
@@ -175,25 +201,53 @@ class LLVMGenerator:
 
     def emit_global_var(self, node):
         llvm_type = self.map_type(node.var_type)
-        init = self.default_value(llvm_type)
-        if node.init_expr:
-            folded = Optimizer(None).visit(node.init_expr)
-            if not isinstance(folded, Number):
-                raise ValueError(f"Codegen: initializer of global '{node.name}' did not fold to a constant")
-            if is_pointer(llvm_type):
-                init = 'null' # the only constant a pointer can start from
-            elif llvm_type == 'i32':
-                init = str(int(folded.value)) # C converts by truncating toward zero
-            else:
-                init = self.float_constant(float(folded.value), llvm_type)
-        self.emit(f"@{node.name} = global {llvm_type} {init}")
+        self.emit(f"@{node.name} = global {llvm_type} {self.constant_init(llvm_type, node.init_expr)}")
         self.globals[node.name] = {'ptr': f"@{node.name}", 'type': llvm_type}
 
     def emit_global_array(self, node):
         llvm_type = self.map_type(node.var_type)
         array_type = f"[{node.size} x {llvm_type}]"
-        self.emit(f"@{node.name} = global {array_type} zeroinitializer")
+        self.emit(f"@{node.name} = global {array_type} {self.constant_init(array_type, node.init)}")
         self.globals[node.name] = {'ptr': f"@{node.name}", 'type': llvm_type, 'array_type': array_type}
+
+    def members(self, llvm_type):
+        """The member types of a struct or array type, in order."""
+        if llvm_type.startswith('%struct.'):
+            fields = self.structs[llvm_type[len('%struct.'):]].values()
+            return [field_type for _, field_type in sorted(fields)]
+        count, element = llvm_type[1:-1].split(' x ', 1)
+        return [element] * int(count)
+
+    def constant_init(self, llvm_type, init):
+        """An LLVM constant for a global's initializer; semantic analysis has made it fully braced."""
+        if init is None:
+            return self.default_value(llvm_type)
+        if isinstance(init, InitList):
+            members = self.members(llvm_type)
+            items = init.items + [None] * (len(members) - len(init.items)) # left out means zero
+            parts = ', '.join(f"{t} {self.constant_init(t, item)}" for t, item in zip(members, items))
+            return f"{{ {parts} }}" if llvm_type.startswith('%struct.') else f"[{parts}]"
+        folded = fold_constant(init)
+        if folded is None:
+            raise ValueError("Codegen: a global initializer did not fold to a constant")
+        if is_pointer(llvm_type):
+            return 'null' # the only constant a pointer can start from
+        if llvm_type == 'i32':
+            return str(int(folded.value)) # C converts by truncating toward zero
+        return self.float_constant(float(folded.value), llvm_type)
+
+    def init_at(self, ptr, llvm_type, init):
+        # Store an initializer into memory that has already been zeroed
+        if not isinstance(init, InitList):
+            val, val_type = self.visit(init)
+            self.store(ptr, llvm_type, val, val_type)
+            return
+        for index, (member_type, item) in enumerate(zip(self.members(llvm_type), init.items)):
+            if item is None:
+                continue # left at zero
+            member_ptr = self.new_reg()
+            self.emit_inst(f"{member_ptr} = getelementptr {llvm_type}, {llvm_type}* {ptr}, i32 0, i32 {index}")
+            self.init_at(member_ptr, member_type, item)
 
     def visit_FunctionDecl(self, node):
         ret_type = self.map_type(node.return_type)
@@ -242,6 +296,11 @@ class LLVMGenerator:
 
     def visit_VarDecl(self, node):
         llvm_type = self.map_type(node.var_type)
+        if isinstance(node.init_expr, InitList):
+            ptr = self.new_slot(node.name, llvm_type)
+            self.initialize_aggregate(ptr, llvm_type, node.init_expr)
+            self.declare(node.name, {'ptr': ptr, 'type': llvm_type})
+            return
         # Evaluate the initializer before declaring, so `int x = x;` in a nested
         # scope reads the outer x
         init = self.visit(node.init_expr) if node.init_expr else None
@@ -256,7 +315,15 @@ class LLVMGenerator:
         llvm_type = self.map_type(node.var_type)
         array_type = f"[{node.size} x {llvm_type}]"
         ptr = self.new_slot(node.name, array_type)
+        if node.init is not None:
+            self.initialize_aggregate(ptr, array_type, node.init)
         self.declare(node.name, {'ptr': ptr, 'type': llvm_type, 'array_type': array_type})
+
+    def initialize_aggregate(self, ptr, llvm_type, init):
+        # Zero everything first, so members the list leaves out are 0, as in C.
+        # This runs each time the declaration does, e.g. on every loop iteration.
+        self.emit_inst(f"store {llvm_type} zeroinitializer, {llvm_type}* {ptr}")
+        self.init_at(ptr, llvm_type, init)
 
     def element_type(self, var_info):
         # name[i] reads an array's element type, or what a pointer points to
@@ -540,16 +607,73 @@ class LLVMGenerator:
         return res, pointee(ptr_type)
 
     def visit_AddressOf(self, node):
-        target = node.expr
-        if isinstance(target, Var):
-            var_info = self.lookup(target.name)
-            return var_info['ptr'], var_info['type'] + '*'
-        if isinstance(target, ArrayAccess):
-            idx_val, idx_type = self.visit(target.index_expr)
+        ptr, llvm_type = self.lvalue_address(node.expr)
+        return ptr, llvm_type + '*'
+
+    def lvalue_address(self, node):
+        """Where an assignable expression lives: (pointer, type of the value there)."""
+        if isinstance(node, Var):
+            var_info = self.lookup(node.name)
+            return var_info['ptr'], var_info.get('array_type', var_info['type'])
+        if isinstance(node, ArrayAccess):
+            idx_val, idx_type = self.visit(node.index_expr)
             idx_val = self.convert(idx_val, idx_type, 'i32')
-            var_info = self.lookup(target.name)
-            return self.element_ptr(var_info, idx_val), self.element_type(var_info) + '*'
-        return self.visit(target.expr) # &*p is p
+            var_info = self.lookup(node.name)
+            return self.element_ptr(var_info, idx_val), self.element_type(var_info)
+        if isinstance(node, Deref):
+            ptr, ptr_type = self.visit(node.expr)
+            return ptr, pointee(ptr_type)
+        if isinstance(node, Member):
+            if node.arrow:
+                base_ptr, base_ptr_type = self.visit(node.base)
+                struct_type = pointee(base_ptr_type)
+            else:
+                base_ptr, struct_type = self.address_or_temporary(node.base)
+            index, field_type = self.structs[struct_type[len('%struct.'):]][node.field]
+            ptr = self.new_reg()
+            self.emit_inst(f"{ptr} = getelementptr {struct_type}, {struct_type}* {base_ptr}, i32 0, i32 {index}")
+            return ptr, field_type
+        if isinstance(node, Index):
+            base_ptr, base_type = self.visit(node.base) # arrays have already decayed to a pointer
+            idx_val, idx_type = self.visit(node.index_expr)
+            idx_val = self.convert(idx_val, idx_type, 'i32')
+            return self.pointer_offset(base_ptr, base_type, idx_val), pointee(base_type)
+        raise TypeError(f"Codegen: {type(node).__name__} is not assignable")
+
+    def address_or_temporary(self, node):
+        # A struct value that isn't stored anywhere yet, such as make().x, gets a stack slot
+        if isinstance(node, (Var, ArrayAccess, Deref, Member, Index)):
+            return self.lvalue_address(node)
+        val, llvm_type = self.visit(node)
+        slot = self.new_slot('tmp', llvm_type)
+        self.emit_inst(f"store {llvm_type} {val}, {llvm_type}* {slot}")
+        return slot, llvm_type
+
+    def load_place(self, ptr, llvm_type):
+        if llvm_type.startswith('['):
+            # An array decays to a pointer to its first element
+            first = self.new_reg()
+            element = llvm_type[llvm_type.index(' x ') + 3:-1]
+            self.emit_inst(f"{first} = getelementptr {llvm_type}, {llvm_type}* {ptr}, i32 0, i32 0")
+            return first, element + '*'
+        res = self.new_reg()
+        self.emit_inst(f"{res} = load {llvm_type}, {llvm_type}* {ptr}")
+        return res, llvm_type
+
+    def visit_Member(self, node):
+        return self.load_place(*self.lvalue_address(node))
+
+    def visit_Index(self, node):
+        return self.load_place(*self.lvalue_address(node))
+
+    def visit_LValueAssignStmt(self, node):
+        ptr, llvm_type = self.lvalue_address(node.target)
+        val, val_type = self.visit(node.expr)
+        return self.store(ptr, llvm_type, val, val_type, node.op)
+
+    def visit_LValueIncDec(self, node):
+        ptr, llvm_type = self.lvalue_address(node.target)
+        return self.incdec_at(ptr, llvm_type, node.op, node.prefix)
 
     def visit_UnaryOp(self, node):
         val, val_type = self.visit(node.expr)
@@ -569,22 +693,23 @@ class LLVMGenerator:
 
     def visit_IncDec(self, node):
         var_info = self.lookup(node.name)
-        llvm_type = var_info['type']
+        return self.incdec_at(var_info['ptr'], var_info['type'], node.op, node.prefix)
+
+    def incdec_at(self, ptr, llvm_type, op, prefix):
         old = self.new_reg()
-        self.emit_inst(f"{old} = load {llvm_type}, {llvm_type}* {var_info['ptr']}")
+        self.emit_inst(f"{old} = load {llvm_type}, {llvm_type}* {ptr}")
         if is_pointer(llvm_type):
-            new = self.pointer_offset(old, llvm_type, 1 if node.op == '++' else -1)
-            self.emit_inst(f"store {llvm_type} {new}, {llvm_type}* {var_info['ptr']}")
-            return (new if node.prefix else old), llvm_type
-        new = self.new_reg()
-        if llvm_type == 'i32':
-            arith = 'add' if node.op == '++' else 'sub'
-            self.emit_inst(f"{new} = {arith} i32 {old}, 1")
+            new = self.pointer_offset(old, llvm_type, 1 if op == '++' else -1)
         else:
-            arith = 'fadd' if node.op == '++' else 'fsub'
-            self.emit_inst(f"{new} = {arith} {llvm_type} {old}, 1.0")
-        self.emit_inst(f"store {llvm_type} {new}, {llvm_type}* {var_info['ptr']}")
-        return (new if node.prefix else old), llvm_type
+            new = self.new_reg()
+            if llvm_type == 'i32':
+                arith = 'add' if op == '++' else 'sub'
+                self.emit_inst(f"{new} = {arith} i32 {old}, 1")
+            else:
+                arith = 'fadd' if op == '++' else 'fsub'
+                self.emit_inst(f"{new} = {arith} {llvm_type} {old}, 1.0")
+        self.emit_inst(f"store {llvm_type} {new}, {llvm_type}* {ptr}")
+        return (new if prefix else old), llvm_type
 
     def visit_Var(self, node):
         var_info = self.lookup(node.name)

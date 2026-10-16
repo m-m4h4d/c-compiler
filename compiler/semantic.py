@@ -51,6 +51,20 @@ def is_arithmetic(t):
 def pointee(t):
     return t[:-1]
 
+# Struct types are 'struct Name'; only struct fields can have array types such as 'int[4]'
+def is_struct(t):
+    return t.startswith('struct ') and not is_pointer(t) and not is_array_type(t)
+
+def is_array_type(t):
+    return t.endswith(']')
+
+def array_element(t):
+    return t[:t.rindex('[')]
+
+def decay(t):
+    # An array used as a value becomes a pointer to its first element
+    return array_element(t) + '*' if is_array_type(t) else t
+
 class SemanticAnalyzer:
     """Checks scoping and declarations, and the type of every expression.
 
@@ -67,6 +81,8 @@ class SemanticAnalyzer:
         """Raise unless a value of type `value` can be stored where `target` is expected."""
         if is_arithmetic(target) and is_arithmetic(value):
             return # implicit conversion, as in C
+        if is_struct(target) and value == target:
+            return # whole-struct copy
         if is_pointer(target) and (value == target or (value == 'int' and self.is_null_constant(value_node))):
             return
         if is_pointer(target) and is_pointer(value):
@@ -76,9 +92,28 @@ class SemanticAnalyzer:
     def require_scalar(self, actual, what, line):
         if not (is_arithmetic(actual) or is_pointer(actual)):
             raise SemanticError(f"{what} must be a number or a pointer, not {actual}", line)
+
+    def check_type(self, t, what, line):
+        """Raise if a declared type names a struct that hasn't been defined."""
+        base = array_element(t) if is_array_type(t) else t
+        by_value = not is_pointer(base)
+        base = base.rstrip('*')
+        if not base.startswith('struct '):
+            return
+        name = base[len('struct '):]
+        if name not in self.structs:
+            raise SemanticError(f"{what}: unknown struct '{name}'", line)
+        if by_value and self.structs[name] is None:
+            # Only reachable from a field of the struct being defined
+            raise SemanticError(f"{what}: struct '{name}' cannot contain itself; use a pointer, struct {name} *", line)
+
+    def struct_fields(self, struct_type):
+        return self.structs[struct_type[len('struct '):]]['fields']
+
     def __init__(self, ast):
         self.ast = ast
         self.symtab = SymbolTable()
+        self.structs = {} # name -> {'fields': {field: type}}, or None while being defined
         self.current_function = None
         self.loop_depth = 0
         self.switch_depth = 0 # break also works inside a switch; continue does not
@@ -98,9 +133,148 @@ class SemanticAnalyzer:
 
     def visit_Program(self, node):
         for decl in node.declarations:
-            if isinstance(decl, VarDecl) and decl.init_expr and not self.is_constant(decl.init_expr):
-                raise SemanticError(f"Initializer of global variable '{decl.name}' must be a constant expression", decl.line)
             self.visit(decl)
+            init = decl.init_expr if isinstance(decl, VarDecl) else getattr(decl, 'init', None)
+            if init is not None and not self.is_constant_init(init):
+                raise SemanticError(f"Initializer of global variable '{decl.name}' must be a constant expression", decl.line)
+
+    def is_constant_init(self, init):
+        if init is None:
+            return True # a member left at zero
+        if isinstance(init, InitList):
+            return all(self.is_constant_init(item) for item in init.items)
+        return self.is_constant(init)
+
+    # ---- Initializers
+    # normalize() checks an initializer against its type and returns it in a
+    # canonical form: one InitList per struct or array, whose items are the
+    # members in order, with None for members left at zero. Brace elision and
+    # designators are resolved here, so later phases only see that form.
+    #
+    # Inside one pair of braces a cursor (a path of member indices) tracks the
+    # next member to fill, as C defines it: a designator moves the cursor,
+    # a value that doesn't fit an aggregate member descends into it (brace
+    # elision), and filling the last member of an elided aggregate steps
+    # back out to the next member of its parent.
+
+    def is_aggregate_type(self, t):
+        return is_struct(t) or is_array_type(t)
+
+    def member_count(self, t):
+        if is_struct(t):
+            return len(self.struct_fields(t))
+        size = t[t.rindex('[') + 1:-1]
+        return int(size) if size else None # `T[]`: the initializer decides
+
+    def member_type(self, t, index):
+        if is_struct(t):
+            return list(self.struct_fields(t).values())[index]
+        return array_element(t)
+
+    def member_name(self, t, index):
+        if is_struct(t):
+            return f"field '{list(self.struct_fields(t))[index]}'"
+        return f"element {index}"
+
+    def type_at(self, t, path):
+        for index in path:
+            t = self.member_type(t, index)
+        return t
+
+    def describe_path(self, t, path):
+        parts = []
+        for index in path:
+            parts.append(self.member_name(t, index))
+            t = self.member_type(t, index)
+        return ''.join(f", {part}" for part in parts)
+
+    def normalize(self, t, init, what, line):
+        if isinstance(init, InitList):
+            if self.is_aggregate_type(t):
+                return self.fill_braced(t, init, what)
+            # A scalar may be wrapped in braces, as in int x = {5};
+            if len(init.items) != 1 or isinstance(init.items[0], (InitList, Designated)):
+                raise SemanticError(f"{what}: {t} takes a single value, not a list of {len(init.items)}", init.line)
+            return self.normalize(t, init.items[0], what, line)
+        if is_array_type(t):
+            raise SemanticError(f"{what}: an array is initialized with a braced list such as {{1, 2}}", line)
+        value = self.visit(init)
+        self.check_assignable(t, value, init, what, line)
+        return init
+
+    def fill_braced(self, t, init, what):
+        result = InitList([])
+        result.line = init.line
+        cursor = [0]
+        for item in init.items:
+            line = item.line or init.line
+            if isinstance(item, Designated):
+                cursor = self.resolve_designators(t, item.designators, what, line)
+                value = item.value
+            else:
+                value = item
+            count = self.member_count(t)
+            if count is not None and cursor[0] >= count:
+                raise SemanticError(f"{what}: too many values for {t}", line)
+            # Brace elision: a value that doesn't fit an aggregate member fills its first member
+            while not isinstance(value, InitList):
+                target = self.type_at(t, cursor)
+                if not self.is_aggregate_type(target) or (is_struct(target) and self.visit(value) == target):
+                    break
+                cursor = cursor + [0]
+            member_what = what + self.describe_path(t, cursor)
+            normalized = self.normalize(self.type_at(t, cursor), value, member_what, line)
+            self.set_at(result, cursor, normalized, member_what, line)
+            cursor = self.advance(t, cursor)
+        return result
+
+    def resolve_designators(self, t, designators, what, line):
+        path = []
+        current = t
+        for kind, designator in designators:
+            if kind == 'field':
+                if not is_struct(current):
+                    raise SemanticError(f"{what}: '.{designator}' needs a struct, not {current}", line)
+                names = list(self.struct_fields(current))
+                if designator not in names:
+                    raise SemanticError(f"{what}: {current} has no field '{designator}'", line)
+                index = names.index(designator)
+            else:
+                if not is_array_type(current):
+                    raise SemanticError(f"{what}: an [index] designator needs an array, not {current}", line)
+                self.visit(designator)
+                folded = fold_constant(designator)
+                if folded is None or folded.val_type != 'int':
+                    raise SemanticError(f"{what}: an array designator must be an integer constant", line)
+                index = folded.value
+                count = self.member_count(current)
+                if index < 0 or (count is not None and index >= count):
+                    raise SemanticError(f"{what}: designator [{index}] is outside {current}", line)
+            path.append(index)
+            current = self.member_type(current, index)
+        return path
+
+    def advance(self, t, cursor):
+        # Move to the next member, stepping out of aggregates entered by brace elision
+        cursor = cursor[:-1] + [cursor[-1] + 1]
+        while len(cursor) > 1 and cursor[-1] >= self.member_count(self.type_at(t, cursor[:-1])):
+            cursor = cursor[:-2] + [cursor[-2] + 1]
+        return cursor
+
+    def set_at(self, node, path, value, what, line):
+        # A later value for the same member replaces the earlier one, as in C
+        for depth, index in enumerate(path):
+            node.items.extend([None] * (index + 1 - len(node.items)))
+            if depth == len(path) - 1:
+                node.items[index] = value
+                return
+            child = node.items[index]
+            if child is None:
+                child = InitList([])
+                node.items[index] = child
+            elif not isinstance(child, InitList):
+                raise SemanticError(f"{what}: part of a member already set from a whole struct value", line)
+            node = child
 
     def is_constant(self, node):
         if isinstance(node, Number):
@@ -118,26 +292,55 @@ class SemanticAnalyzer:
         else:
             self.visit(node)
 
+    def visit_StructDecl(self, node):
+        if node.name in self.structs:
+            raise SemanticError(f"struct '{node.name}' is already defined", node.line)
+        if not node.fields:
+            raise SemanticError(f"struct '{node.name}' needs at least one field", node.line)
+        self.structs[node.name] = None # visible, so fields can point to it
+        fields = {}
+        field_lines = getattr(node, 'field_lines', [node.line] * len(node.fields))
+        for (field_type, field_name), line in zip(node.fields, field_lines):
+            if field_name in fields:
+                raise SemanticError(f"Field '{field_name}' appears twice in struct '{node.name}'", line)
+            if is_array_type(field_type):
+                size = field_type[field_type.rindex('[') + 1:-1]
+                if not size.isdigit() or int(size) <= 0:
+                    raise SemanticError(f"Size of field '{field_name}' must be a positive integer, not {size}", line)
+            self.check_type(field_type, f"Field '{field_name}'", line)
+            fields[field_name] = field_type
+        self.structs[node.name] = {'fields': fields}
+
     def visit_FunctionDecl(self, node):
+        self.check_type(node.return_type, f"Return type of '{node.name}'", node.line)
         self.symtab.declare_function(node.name, node.return_type, node.params, node.line)
         self.current_function = node
         self.symtab.enter_scope()
         param_lines = getattr(node, 'param_lines', [node.line] * len(node.params))
         for (p_type, p_name), line in zip(node.params, param_lines):
+            self.check_type(p_type, f"Parameter '{p_name}'", line)
             self.symtab.declare(p_name, p_type, line=line)
         self.visit(node.body)
         self.symtab.exit_scope()
         self.current_function = None
 
     def visit_VarDecl(self, node):
+        self.check_type(node.var_type, f"Variable '{node.name}'", node.line)
         self.symtab.declare(node.name, node.var_type, line=node.line)
-        if node.init_expr:
-            value = self.visit(node.init_expr)
-            self.check_assignable(node.var_type, value, node.init_expr, f"Initializer of '{node.name}'", node.line)
+        if node.init_expr is not None:
+            node.init_expr = self.normalize(node.var_type, node.init_expr, f"Initializer of '{node.name}'", node.line)
 
     def visit_ArrayDecl(self, node):
-        if not isinstance(node.size, int) or node.size <= 0:
+        if node.size is not None and (not isinstance(node.size, int) or node.size <= 0):
             raise SemanticError(f"Size of array '{node.name}' must be a positive integer, not {node.size}", node.line)
+        self.check_type(node.var_type, f"Array '{node.name}'", node.line)
+        if node.init is not None:
+            array_type = f"{node.var_type}[{'' if node.size is None else node.size}]"
+            node.init = self.normalize(array_type, node.init, f"Initializer of '{node.name}'", node.line)
+            if node.size is None:
+                node.size = len(node.init.items)
+                if node.size == 0:
+                    raise SemanticError(f"Array '{node.name}' needs at least one element", node.line)
         self.symtab.declare(node.name, node.var_type, is_array=True, size=node.size, line=node.line)
 
     def visit_Block(self, node):
@@ -243,6 +446,53 @@ class SemanticAnalyzer:
             raise SemanticError(f"Cannot dereference {pointer}: only pointers can be used with *", node.line)
         return self.check_assignment(pointee(pointer), node, "Assignment through a pointer")
 
+    def visit_LValueAssignStmt(self, node):
+        target = self.lvalue_type(node.target)
+        return self.check_assignment(target, node, "Assignment")
+
+    def lvalue_type(self, target):
+        # The type stored at an assignable place; whole arrays aren't assignable
+        if isinstance(target, Member):
+            field_type = self.member_field_type(target)
+            if is_array_type(field_type):
+                raise SemanticError(f"Cannot assign to array field '{target.field}' directly", target.line)
+            return field_type
+        return self.visit(target)
+
+    def visit_LValueIncDec(self, node):
+        target = self.lvalue_type(node.target)
+        if not (is_arithmetic(target) or is_pointer(target)):
+            raise SemanticError(f"Operand of '{node.op}' must be a number or a pointer, not {target}", node.line)
+        return target
+
+    def member_field_type(self, node):
+        """The declared type of base.field or base->field, before arrays decay."""
+        base = self.visit(node.base)
+        if node.arrow:
+            if not (is_pointer(base) and is_struct(pointee(base))):
+                hint = "; use '.' on a struct" if is_struct(base) else ""
+                raise SemanticError(f"'->' needs a pointer to a struct, not {base}{hint}", node.line)
+            struct_type = pointee(base)
+        else:
+            if not is_struct(base):
+                hint = "; use '->' on a pointer to a struct" if is_pointer(base) and is_struct(pointee(base)) else ""
+                raise SemanticError(f"'.' needs a struct, not {base}{hint}", node.line)
+            struct_type = base
+        fields = self.struct_fields(struct_type)
+        if node.field not in fields:
+            raise SemanticError(f"{struct_type} has no field '{node.field}'", node.line)
+        return fields[node.field]
+
+    def visit_Member(self, node):
+        return decay(self.member_field_type(node))
+
+    def visit_Index(self, node):
+        base = self.visit(node.base)
+        if not is_pointer(base):
+            raise SemanticError(f"Only arrays and pointers can be indexed, not {base}", node.line)
+        self.require_int(self.visit(node.index_expr), "Array index", node.line)
+        return pointee(base)
+
     def check_assignment(self, target, node, what):
         value = self.visit(node.expr)
         if node.op is None:
@@ -252,7 +502,7 @@ class SemanticAnalyzer:
             if node.op not in ('+', '-') or value != 'int':
                 raise SemanticError(f"{what}: '{node.op}=' on a pointer needs '+=' or '-=' with an int", node.line)
         else:
-            if is_pointer(value):
+            if not is_arithmetic(target) or is_pointer(value) or not is_arithmetic(value):
                 raise SemanticError(f"{what}: cannot use {value} with '{node.op}=' on {target}", node.line)
             if node.op == '%':
                 self.require_int(target, "Target of '%='", node.line)
@@ -323,15 +573,22 @@ class SemanticAnalyzer:
             if var_info and var_info.get('is_array'):
                 raise SemanticError(f"Taking the address of array '{target.name}' isn't supported; "
                                     f"'{target.name}' on its own already points to its first element", node.line)
-        elif not isinstance(target, (ArrayAccess, Deref)):
-            raise SemanticError("Can only take the address of a variable, an array element or *pointer", node.line)
+        elif isinstance(target, Member):
+            field_type = self.member_field_type(target)
+            if is_array_type(field_type):
+                raise SemanticError(f"Taking the address of array field '{target.field}' isn't supported; "
+                                    f"'{target.field}' on its own already points to its first element", node.line)
+            return field_type + '*'
+        elif not isinstance(target, (ArrayAccess, Deref, Index)):
+            raise SemanticError("Can only take the address of a variable, an array element, a struct member "
+                                "or *pointer", node.line)
         return self.visit(target) + '*'
 
     def visit_IncDec(self, node):
         var_info = self.symtab.lookup(node.name)
         if not var_info:
             raise SemanticError(f"Undeclared variable '{node.name}'", node.line)
-        if var_info.get('type') == 'function' or var_info.get('is_array'):
+        if var_info.get('type') == 'function' or var_info.get('is_array') or is_struct(var_info['type']):
             raise SemanticError(f"Operand of '{node.op}' must be a scalar variable, got '{node.name}'", node.line)
         return var_info['type']
 

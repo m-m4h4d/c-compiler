@@ -15,8 +15,10 @@ This document presents the design and implementation of a modular compiler for a
 ### Features Supported
 
 - **Data Types**: `int`, `float`, `double`, pointers to them at any depth (`int *`, `double **`), and `void` (function return type only), with implicit conversions between numeric types on assignment, arguments, returns and mixed arithmetic
+- **Structs**: `struct` definitions with number, pointer, nested struct and fixed-size array fields (including `struct Node *next` for linked structures); local, global and array-of-struct variables; `.` and `->` access; whole-struct copies, arguments and return values
+- **Initializer lists**: `struct Point p = {1, 2};`, nested lists, brace elision (`struct Rect r = {0, 0, 3, 4};`), arrays such as `int a[] = {1, 2, 3}` with the size taken from the list, arrays of structs, and designated initializers such as `{ .y = 2, .corner.x = 1 }` and `{ [4] = 1 }`, after which positional values continue from the next member. Members left out are zero, as in C, a later value for the same member replaces an earlier one, and global initializers must be constants
 - **Pointers**: `&x` and `&a[i]`, `*p` for reading and writing, `p[i]`, pointer arithmetic (`p + n`, `p - n`, `p++`, and `p - q` for the number of elements between two pointers), comparisons, null checks against `0`, arrays that decay to pointers, and `int a[]` parameters
-- **Expressions**: Arithmetic (`+`, `-`, `*`, `/`, `%`), Relational (`==`, `!=`, `<`, `>`, `<=`, `>=`), Logical (`&&`, `||`, `!`) with short-circuit evaluation, prefix and postfix `++` / `--`, and assignment with `=`, `+=`, `-=`, `*=`, `/=` and `%=`
+- **Expressions**: Arithmetic (`+`, `-`, `*`, `/`, `%`), Relational (`==`, `!=`, `<`, `>`, `<=`, `>=`), Logical (`&&`, `||`, `!`) with short-circuit evaluation, prefix and postfix `++` / `--` on variables, array elements, struct members and `*p`, and assignment with `=`, `+=`, `-=`, `*=`, `/=` and `%=`
 - **Control Flow**: `if-else`, `switch` (with fall-through and `default`), `while`, `do-while`, `for` loops (with a declaration in the init clause, and any clause may be empty), `break` and `continue`
 - **Functions**: Parameter passing, return statements, recursion, `void` functions and `f(void)` parameter lists
 - **Variables**: Block-scoped locals with shadowing, and global variables and arrays with constant initializers
@@ -26,14 +28,19 @@ This document presents the design and implementation of a modular compiler for a
 ### Context-Free Grammar (Subset)
 
 ```cpp
-Program   -> Decl*
-Decl      -> Type ID ( '(' Params ')' Block | '[' NUMBER ']' ';' | [ '=' Expr ] ';' )
+Program   -> ( StructDef | Decl )*
+StructDef -> 'struct' ID '{' { Type ID [ '[' NUMBER ']' ] ';' } '}' ';'
+Decl      -> Type ID ( '(' Params ')' Block | ArrayPart ';' | [ '=' Init ] ';' )
+ArrayPart -> '[' [ NUMBER ] ']' [ '=' InitList ]
+Init      -> Expr | InitList
+InitList  -> '{' [ Item { ',' Item } [ ',' ] ] '}'
+Item      -> [ { '.' ID | '[' Expr ']' } '=' ] Init
            | 'void' ID '(' Params ')' Block
-Type      -> ( 'int' | 'float' | 'double' ) { '*' }
+Type      -> ( 'int' | 'float' | 'double' | 'struct' ID ) { '*' }
 Params    -> 'void' | [ Param { ',' Param } ]
 Param     -> Type ID [ '[' [ NUMBER ] ']' ]
 Block     -> '{' ( LocalDecl | Stmt )* '}'
-LocalDecl -> Type ID ( '[' NUMBER ']' | [ '=' Expr ] ) ';'
+LocalDecl -> Type ID ( ArrayPart | [ '=' Init ] ) ';'
 Stmt      -> IfStmt | SwitchStmt | WhileStmt | DoWhileStmt | ForStmt | ReturnStmt | 'break' ';' | 'continue' ';' | ExprStmt | Block
 IfStmt    -> 'if' '(' Expr ')' Stmt [ 'else' Stmt ]
 SwitchStmt -> 'switch' '(' Expr ')' '{' { ( 'case' Expr | 'default' ) ':' { LocalDecl | Stmt } } '}'
@@ -43,7 +50,7 @@ ForStmt   -> 'for' '(' ( Type ID [ '=' Expr ] ';' | ExprStmt | ';' ) [ Expr ] ';
 ReturnStmt-> 'return' [ Expr ] ';'
 ExprStmt  -> Assign ';'
 Assign    -> LValue AssignOp Assign | Expr
-LValue    -> ID | ID '[' Expr ']' | '*' Unary
+LValue    -> Postfix | '*' Unary
 AssignOp  -> '=' | '+=' | '-=' | '*=' | '/=' | '%='
 Expr      -> LogicalOr
 LogicalOr -> LogicalAnd { '||' LogicalAnd }
@@ -52,8 +59,9 @@ Equality  -> Relational { ( '==' | '!=' ) Relational }
 Relational-> Additive { ( '<' | '>' | '<=' | '>=' ) Additive }
 Additive  -> Term { ( '+' | '-' ) Term }
 Term      -> Unary { ( '*' | '/' | '%' ) Unary }
-Unary     -> ( '-' | '!' | '*' | '&' ) Unary | ( '++' | '--' ) ID | Primary
-Primary   -> NUMBER | ID [ '++' | '--' ] | ID '(' [ Expr { ',' Expr } ] ')' | ID '[' Expr ']' | '(' Expr ')'
+Unary     -> ( '-' | '!' | '*' | '&' | '++' | '--' ) Unary | Postfix
+Postfix   -> Primary { '[' Expr ']' | '.' ID | '->' ID } [ '++' | '--' ]
+Primary   -> NUMBER | ID | ID '(' [ Expr { ',' Expr } ] ')' | '(' Expr ')'
 ```
 
 ## 3. Design of Compiler Phases
@@ -67,9 +75,11 @@ Primary   -> NUMBER | ID [ '++' | '--' ] | ID '(' [ Expr { ',' Expr } ] ')' | ID
 
 ## 4. Limitations
 
-- Single-dimensional arrays only, with no array initializers.
-- Structs, `char` and string literals are not supported, so there is no I/O; programs report results through their exit code.
-- Pointers have no `void *`, casts, function pointers or `&array` (the array name already points to its first element), and `++`/`--` only apply to plain variables, so `(*p)++` is written `*p += 1`.
+- Single-dimensional arrays only.
+- `char`, string literals and unions are not supported, so there is no I/O; programs report results through their exit code.
+- Structs must be defined at the top level before they are used, even through a pointer, and have no `sizeof`.
+- An initializer list with more values than its struct or array has room for is an error, as the C standard requires; clang only warns and drops the extra values.
+- Pointers have no `void *`, casts or function pointers, and `&` of a whole array or array field isn't supported (the name on its own already points to its first element).
 - Assigning between different pointer types is an error. Clang only warns about it, but GCC 14 and later reject it too.
 - Conversions between `int`, `float` and `double` happen implicitly as in C, without warnings for narrowing (for example, assigning a `double` to an `int`).
 - Zero-length arrays, a GNU extension that clang accepts, are rejected as in ISO C.

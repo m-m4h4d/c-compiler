@@ -5,6 +5,11 @@ class Program(ASTNode):
     def __init__(self, declarations):
         self.declarations = declarations
 
+class StructDecl(ASTNode):
+    def __init__(self, name, fields):
+        self.name = name
+        self.fields = fields # (type, name) pairs; an array field has a type such as 'int[4]'
+
 class FunctionDecl(ASTNode):
     def __init__(self, return_type, name, params, body):
         self.return_type = return_type
@@ -19,10 +24,24 @@ class VarDecl(ASTNode):
         self.init_expr = init_expr
 
 class ArrayDecl(ASTNode):
-    def __init__(self, var_type, name, size):
+    def __init__(self, var_type, name, size, init=None):
         self.var_type = var_type
         self.name = name
-        self.size = size
+        self.size = size # None for `int a[] = {...}`, until semantic analysis counts the initializer
+        self.init = init # an InitList, or None
+
+class InitList(ASTNode):
+    def __init__(self, items):
+        # As parsed: expressions, nested InitLists and Designated entries, in
+        # order. After semantic analysis: one entry per member, where None
+        # means zero, and no Designated entries.
+        self.items = items
+
+class Designated(ASTNode):
+    def __init__(self, designators, value):
+        # designators: ('field', name) or ('index', expr), e.g. .corner.x or [2]
+        self.designators = designators
+        self.value = value # an expression or InitList
 
 class Block(ASTNode):
     def __init__(self, statements):
@@ -108,6 +127,29 @@ class Deref(ASTNode):
 class AddressOf(ASTNode):
     def __init__(self, expr):
         self.expr = expr # &expr: a Var, ArrayAccess or Deref
+
+class Member(ASTNode):
+    def __init__(self, base, field, arrow):
+        self.base = base # a struct (base.field) or a pointer to one (base->field)
+        self.field = field
+        self.arrow = arrow
+
+class Index(ASTNode):
+    def __init__(self, base, index_expr):
+        self.base = base # any expression of pointer or array type: base[index]
+        self.index_expr = index_expr
+
+class LValueAssignStmt(ASTNode):
+    def __init__(self, target, expr, op=None):
+        self.target = target # a Member or Index; plain names use AssignStmt / ArrayAssignStmt
+        self.expr = expr
+        self.op = op
+
+class LValueIncDec(ASTNode):
+    def __init__(self, target, op, prefix):
+        self.target = target # ++ / -- on an element, member or *pointer
+        self.op = op
+        self.prefix = prefix
 
 class Var(ASTNode):
     def __init__(self, name):

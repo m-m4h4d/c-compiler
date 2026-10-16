@@ -8,6 +8,7 @@ class TACGenerator:
         self.temp_count = 0
         self.label_count = 0
         self.loops = [] # (continue label, break label) for each enclosing loop
+        self.struct_fields = {} # struct name -> [(type, field)], for spelling out initializers
 
     def new_temp(self):
         self.temp_count += 1
@@ -36,11 +37,16 @@ class TACGenerator:
 
     def visit_Program(self, node):
         for decl in node.declarations:
-            if isinstance(decl, VarDecl):
-                init = f" = {self.visit(decl.init_expr)}" if decl.init_expr else ""
+            if isinstance(decl, StructDecl):
+                self.struct_fields[decl.name] = decl.fields
+                fields = ', '.join(f"{c_type} {name}" for c_type, name in decl.fields)
+                self.emit(f"struct {decl.name} {{ {fields} }}")
+            elif isinstance(decl, VarDecl):
+                init = f" = {self.render_constant(decl.init_expr)}" if decl.init_expr else ""
                 self.emit(f"global {decl.name}{init}")
             elif isinstance(decl, ArrayDecl):
-                self.emit(f"global_array {decl.name}, {decl.size}")
+                init = f" = {self.render_constant(decl.init)}" if decl.init else ""
+                self.emit(f"global_array {decl.name}, {decl.size}{init}")
             else:
                 self.visit(decl)
 
@@ -51,13 +57,41 @@ class TACGenerator:
         self.emit(f"end_func")
         self.emit("") # blank line for readability
 
+    def render_constant(self, init):
+        if init is None:
+            return '0' # a member left at zero
+        if isinstance(init, InitList):
+            return '{' + ', '.join(self.render_constant(item) for item in init.items) + '}'
+        return self.visit(init)
+
     def visit_VarDecl(self, node):
-        if node.init_expr:
+        if isinstance(node.init_expr, InitList):
+            self.emit(f"clear {node.name}") # members the list leaves out are zero
+            self.emit_init(node.name, node.var_type, node.init_expr)
+        elif node.init_expr:
             val = self.visit(node.init_expr)
             self.emit(f"{node.name} = {val}")
 
     def visit_ArrayDecl(self, node):
         self.emit(f"alloc_array {node.name}, {node.size}")
+        if node.init is not None:
+            self.emit(f"clear {node.name}")
+            self.emit_init(node.name, f"{node.var_type}[{node.size}]", node.init)
+
+    def emit_init(self, target, c_type, init):
+        # One assignment per value in a (fully braced) initializer
+        if not isinstance(init, InitList):
+            self.emit(f"{target} = {self.visit(init)}")
+            return
+        if c_type.endswith(']'):
+            element = c_type[:c_type.rindex('[')]
+            members = [(element, f"{target}[{i}]") for i in range(len(init.items))]
+        else:
+            fields = self.struct_fields[c_type[len('struct '):]]
+            members = [(field_type, f"{target}.{name}") for field_type, name in fields]
+        for (member_type, member_target), item in zip(members, init.items):
+            if item is not None: # None is a member left at zero
+                self.emit_init(member_target, member_type, item)
 
     def visit_Block(self, node):
         for stmt in node.statements:
@@ -201,12 +235,56 @@ class TACGenerator:
         temp = self.new_temp()
         if isinstance(target, Var):
             self.emit(f"{temp} = &{target.name}")
-        elif isinstance(target, ArrayAccess):
-            idx = self.visit(target.index_expr)
-            self.emit(f"{temp} = &{target.name}[{idx}]")
-        else:
+        elif isinstance(target, Deref):
             return self.visit(target.expr) # &*p is p
+        else:
+            self.emit(f"{temp} = &{self.place(target)}")
         return temp
+
+    def place(self, node):
+        """Text for an assignable place, evaluating any index or pointer inside it."""
+        if isinstance(node, Var):
+            return node.name
+        if isinstance(node, ArrayAccess):
+            return f"{node.name}[{self.visit(node.index_expr)}]"
+        if isinstance(node, Deref):
+            return f"*{self.visit(node.expr)}"
+        if isinstance(node, Member):
+            if node.arrow:
+                return f"{self.visit(node.base)}->{node.field}"
+            base = self.place(node.base) if isinstance(node.base, (Var, ArrayAccess, Deref, Member, Index)) else self.visit(node.base)
+            return f"{base}.{node.field}"
+        base = self.visit(node.base)
+        return f"{base}[{self.visit(node.index_expr)}]"
+
+    def visit_Member(self, node):
+        temp = self.new_temp()
+        self.emit(f"{temp} = {self.place(node)}")
+        return temp
+
+    visit_Index = visit_Member
+
+    def visit_LValueAssignStmt(self, node):
+        target = self.place(node.target)
+        val = self.visit(node.expr)
+        if node.op:
+            old = self.new_temp()
+            self.emit(f"{old} = {target}")
+            temp = self.new_temp()
+            self.emit(f"{temp} = {old} {node.op} {val}")
+            val = temp
+        self.emit(f"{target} = {val}")
+
+    def visit_LValueIncDec(self, node):
+        target = self.place(node.target)
+        old = self.new_temp()
+        self.emit(f"{old} = {target}")
+        self.emit(f"{target} = {old} {'+' if node.op == '++' else '-'} 1")
+        if node.prefix:
+            new = self.new_temp()
+            self.emit(f"{new} = {target}")
+            return new
+        return old
 
     def visit_BinOp(self, node):
         left_val = self.visit(node.left)

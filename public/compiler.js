@@ -159,7 +159,9 @@
       case 'FunctionDecl':
         return `FunctionDecl ${node.return_type} ${node.name}(${node.params.map((p) => p.join(' ')).join(', ')})`;
       case 'VarDecl': return `VarDecl ${node.var_type} ${node.name}`;
-      case 'ArrayDecl': return `ArrayDecl ${node.var_type} ${node.name}[${node.size}]`;
+      case 'ArrayDecl': return `ArrayDecl ${node.var_type} ${node.name}[${node.size ?? ''}]`; // [] when the list gives the size
+      case 'InitList': return `InitList {${node.items.length}}`;
+      case 'Designated': return `Designated ${node.designators.map(([kind, d]) => kind === 'field' ? '.' + d : '[' + (d.value ?? '…') + ']').join('')} =`;
       case 'BinOp': return `BinOp ${node.op}`;
       case 'UnaryOp': return `UnaryOp ${node.op}`;
       case 'Number': return `Number ${node.value}`;
@@ -168,6 +170,11 @@
       case 'AssignStmt': return `AssignStmt ${node.name} ${node.op || ''}=`;
       case 'ArrayAssignStmt': return `ArrayAssignStmt ${node.name}[] ${node.op || ''}=`;
       case 'FuncCall': return `FuncCall ${node.name}`;
+      case 'StructDecl': return `StructDecl ${node.name} { ${node.fields.map((f) => f.join(' ')).join('; ')} }`;
+      case 'Member': return `Member ${node.arrow ? '->' : '.'}${node.field}`;
+      case 'Index': return 'Index []';
+      case 'LValueAssignStmt': return `LValueAssignStmt ${node.op || ''}=`;
+      case 'LValueIncDec': return `LValueIncDec ${node.prefix ? node.op + 'x' : 'x' + node.op}`;
       case 'Deref': return 'Deref *';
       case 'AddressOf': return 'AddressOf &';
       case 'DerefAssignStmt': return `DerefAssignStmt *ptr ${node.op || ''}=`;

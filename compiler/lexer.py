@@ -24,6 +24,7 @@ class Lexer:
         'while': 'WHILE',
         'do': 'DO',
         'switch': 'SWITCH',
+        'struct': 'STRUCT',
         'case': 'CASE',
         'default': 'DEFAULT',
         'for': 'FOR',
@@ -47,6 +48,7 @@ class Lexer:
         ('OR',       r'\|\|'),
         ('INC',      r'\+\+'),
         ('DEC',      r'--'),
+        ('ARROW',    r'->'),
         ('COMPOUND_ASSIGN', r'[-+*/%]='),
         ('ASSIGN',   r'='),
         ('LT',       r'<'),
@@ -66,6 +68,7 @@ class Lexer:
         ('SEMI',     r';'),
         ('COLON',    r':'),
         ('COMMA',    r','),
+        ('DOT',      r'\.'),
         ('SKIP',     r'[ \t]+'),           # Skip over spaces and tabs
         ('NEWLINE',  r'\n'),               # Line endings
         ('MISMATCH', r'.'),                # Any other character
