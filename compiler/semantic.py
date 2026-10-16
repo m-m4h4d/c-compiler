@@ -139,36 +139,61 @@ class SemanticAnalyzer:
                 raise SemanticError(f"Initializer of global variable '{decl.name}' must be a constant expression", decl.line)
 
     def is_constant_init(self, init):
+        if init is None:
+            return True # a member left at zero
         if isinstance(init, InitList):
             return all(self.is_constant_init(item) for item in init.items)
         return self.is_constant(init)
 
     # ---- Initializers
-    # normalize() checks an initializer against its type and returns it fully
-    # braced: one InitList per struct or array, holding one entry per member
-    # in order (trailing members that were left out are zero). Later phases
-    # only ever see this form, so brace elision is handled here alone.
+    # normalize() checks an initializer against its type and returns it in a
+    # canonical form: one InitList per struct or array, whose items are the
+    # members in order, with None for members left at zero. Brace elision and
+    # designators are resolved here, so later phases only see that form.
+    #
+    # Inside one pair of braces a cursor (a path of member indices) tracks the
+    # next member to fill, as C defines it: a designator moves the cursor,
+    # a value that doesn't fit an aggregate member descends into it (brace
+    # elision), and filling the last member of an elided aggregate steps
+    # back out to the next member of its parent.
 
     def is_aggregate_type(self, t):
         return is_struct(t) or is_array_type(t)
 
-    def members_of(self, t):
+    def member_count(self, t):
         if is_struct(t):
-            return [(field_type, f"field '{name}'") for name, field_type in self.struct_fields(t).items()]
-        count = int(t[t.rindex('[') + 1:-1])
-        return [(array_element(t), f"element {i}") for i in range(count)]
+            return len(self.struct_fields(t))
+        size = t[t.rindex('[') + 1:-1]
+        return int(size) if size else None # `T[]`: the initializer decides
+
+    def member_type(self, t, index):
+        if is_struct(t):
+            return list(self.struct_fields(t).values())[index]
+        return array_element(t)
+
+    def member_name(self, t, index):
+        if is_struct(t):
+            return f"field '{list(self.struct_fields(t))[index]}'"
+        return f"element {index}"
+
+    def type_at(self, t, path):
+        for index in path:
+            t = self.member_type(t, index)
+        return t
+
+    def describe_path(self, t, path):
+        parts = []
+        for index in path:
+            parts.append(self.member_name(t, index))
+            t = self.member_type(t, index)
+        return ''.join(f", {part}" for part in parts)
 
     def normalize(self, t, init, what, line):
         if isinstance(init, InitList):
             if self.is_aggregate_type(t):
-                position = [0]
-                result = self.fill_aggregate(t, init.items, position, what, init.line)
-                if position[0] < len(init.items):
-                    extra = init.items[position[0]]
-                    raise SemanticError(f"{what}: too many values for {t}", extra.line or init.line)
-                return result
+                return self.fill_braced(t, init, what)
             # A scalar may be wrapped in braces, as in int x = {5};
-            if len(init.items) != 1 or isinstance(init.items[0], InitList):
+            if len(init.items) != 1 or isinstance(init.items[0], (InitList, Designated)):
                 raise SemanticError(f"{what}: {t} takes a single value, not a list of {len(init.items)}", init.line)
             return self.normalize(t, init.items[0], what, line)
         if is_array_type(t):
@@ -177,34 +202,79 @@ class SemanticAnalyzer:
         self.check_assignable(t, value, init, what, line)
         return init
 
-    def fill_aggregate(self, t, items, position, what, line):
-        # `T[]` is an array whose size the initializer decides
-        unbounded = t.endswith('[]')
-        members = None if unbounded else self.members_of(t)
-        result = []
-        while position[0] < len(items):
-            index = len(result)
-            if unbounded:
-                member_type, description = t[:-2], f"element {index}"
-            elif index < len(members):
-                member_type, description = members[index]
+    def fill_braced(self, t, init, what):
+        result = InitList([])
+        result.line = init.line
+        cursor = [0]
+        for item in init.items:
+            line = item.line or init.line
+            if isinstance(item, Designated):
+                cursor = self.resolve_designators(t, item.designators, what, line)
+                value = item.value
             else:
-                break # leftover values belong to an enclosing list, or are too many
-            item = items[position[0]]
-            member_what = f"{what}, {description}"
-            if isinstance(item, InitList):
-                position[0] += 1
-                result.append(self.normalize(member_type, item, member_what, item.line))
-            elif self.is_aggregate_type(member_type) and not (is_struct(member_type) and self.visit(item) == member_type):
-                # Brace elision: an aggregate member without its own braces takes
-                # as many of the following values as it needs
-                result.append(self.fill_aggregate(member_type, items, position, member_what, item.line or line))
+                value = item
+            count = self.member_count(t)
+            if count is not None and cursor[0] >= count:
+                raise SemanticError(f"{what}: too many values for {t}", line)
+            # Brace elision: a value that doesn't fit an aggregate member fills its first member
+            while not isinstance(value, InitList):
+                target = self.type_at(t, cursor)
+                if not self.is_aggregate_type(target) or (is_struct(target) and self.visit(value) == target):
+                    break
+                cursor = cursor + [0]
+            member_what = what + self.describe_path(t, cursor)
+            normalized = self.normalize(self.type_at(t, cursor), value, member_what, line)
+            self.set_at(result, cursor, normalized, member_what, line)
+            cursor = self.advance(t, cursor)
+        return result
+
+    def resolve_designators(self, t, designators, what, line):
+        path = []
+        current = t
+        for kind, designator in designators:
+            if kind == 'field':
+                if not is_struct(current):
+                    raise SemanticError(f"{what}: '.{designator}' needs a struct, not {current}", line)
+                names = list(self.struct_fields(current))
+                if designator not in names:
+                    raise SemanticError(f"{what}: {current} has no field '{designator}'", line)
+                index = names.index(designator)
             else:
-                position[0] += 1
-                result.append(self.normalize(member_type, item, member_what, item.line or line))
-        normalized = InitList(result)
-        normalized.line = line
-        return normalized
+                if not is_array_type(current):
+                    raise SemanticError(f"{what}: an [index] designator needs an array, not {current}", line)
+                self.visit(designator)
+                folded = fold_constant(designator)
+                if folded is None or folded.val_type != 'int':
+                    raise SemanticError(f"{what}: an array designator must be an integer constant", line)
+                index = folded.value
+                count = self.member_count(current)
+                if index < 0 or (count is not None and index >= count):
+                    raise SemanticError(f"{what}: designator [{index}] is outside {current}", line)
+            path.append(index)
+            current = self.member_type(current, index)
+        return path
+
+    def advance(self, t, cursor):
+        # Move to the next member, stepping out of aggregates entered by brace elision
+        cursor = cursor[:-1] + [cursor[-1] + 1]
+        while len(cursor) > 1 and cursor[-1] >= self.member_count(self.type_at(t, cursor[:-1])):
+            cursor = cursor[:-2] + [cursor[-2] + 1]
+        return cursor
+
+    def set_at(self, node, path, value, what, line):
+        # A later value for the same member replaces the earlier one, as in C
+        for depth, index in enumerate(path):
+            node.items.extend([None] * (index + 1 - len(node.items)))
+            if depth == len(path) - 1:
+                node.items[index] = value
+                return
+            child = node.items[index]
+            if child is None:
+                child = InitList([])
+                node.items[index] = child
+            elif not isinstance(child, InitList):
+                raise SemanticError(f"{what}: part of a member already set from a whole struct value", line)
+            node = child
 
     def is_constant(self, node):
         if isinstance(node, Number):

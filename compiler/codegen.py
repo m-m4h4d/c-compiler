@@ -243,6 +243,8 @@ class LLVMGenerator:
             self.store(ptr, llvm_type, val, val_type)
             return
         for index, (member_type, item) in enumerate(zip(self.members(llvm_type), init.items)):
+            if item is None:
+                continue # left at zero
             member_ptr = self.new_reg()
             self.emit_inst(f"{member_ptr} = getelementptr {llvm_type}, {llvm_type}* {ptr}, i32 0, i32 {index}")
             self.init_at(member_ptr, member_type, item)

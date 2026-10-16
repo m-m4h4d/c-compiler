@@ -166,11 +166,29 @@ class Parser:
         self.match('SEMI')
         return self.at(VarDecl(var_type, name, init_expr), line)
 
+    def parse_designated(self):
+        # .field and [index] designators, chained, then `= value`
+        line = self.current_token.line
+        designators = []
+        while self.current_token.type in ('DOT', 'LBRACKET'):
+            if self.current_token.type == 'DOT':
+                self.match('DOT')
+                designators.append(('field', self.match('ID').value))
+            else:
+                self.match('LBRACKET')
+                designators.append(('index', self.parse_expression()))
+                self.match('RBRACKET')
+        self.match('ASSIGN')
+        value = self.parse_init_list() if self.current_token.type == 'LBRACE' else self.parse_expression()
+        return self.at(Designated(designators, value), line)
+
     def parse_init_list(self):
         line = self.match('LBRACE').line
         items = []
         while self.current_token.type != 'RBRACE':
-            if self.current_token.type == 'LBRACE':
+            if self.current_token.type in ('DOT', 'LBRACKET'):
+                items.append(self.parse_designated())
+            elif self.current_token.type == 'LBRACE':
                 items.append(self.parse_init_list())
             else:
                 items.append(self.parse_expression())

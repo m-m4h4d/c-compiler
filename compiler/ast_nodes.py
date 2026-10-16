@@ -32,7 +32,16 @@ class ArrayDecl(ASTNode):
 
 class InitList(ASTNode):
     def __init__(self, items):
-        self.items = items # expressions and nested InitLists, in order
+        # As parsed: expressions, nested InitLists and Designated entries, in
+        # order. After semantic analysis: one entry per member, where None
+        # means zero, and no Designated entries.
+        self.items = items
+
+class Designated(ASTNode):
+    def __init__(self, designators, value):
+        # designators: ('field', name) or ('index', expr), e.g. .corner.x or [2]
+        self.designators = designators
+        self.value = value # an expression or InitList
 
 class Block(ASTNode):
     def __init__(self, statements):

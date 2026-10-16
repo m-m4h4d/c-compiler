@@ -58,6 +58,8 @@ class TACGenerator:
         self.emit("") # blank line for readability
 
     def render_constant(self, init):
+        if init is None:
+            return '0' # a member left at zero
         if isinstance(init, InitList):
             return '{' + ', '.join(self.render_constant(item) for item in init.items) + '}'
         return self.visit(init)
@@ -88,7 +90,8 @@ class TACGenerator:
             fields = self.struct_fields[c_type[len('struct '):]]
             members = [(field_type, f"{target}.{name}") for field_type, name in fields]
         for (member_type, member_target), item in zip(members, init.items):
-            self.emit_init(member_target, member_type, item)
+            if item is not None: # None is a member left at zero
+                self.emit_init(member_target, member_type, item)
 
     def visit_Block(self, node):
         for stmt in node.statements:
