@@ -94,6 +94,14 @@ The compiler is designed to run in a standard Python 3 environment without exter
 
    Each program in `tests/programs/` is compiled both natively by clang and through this compiler, and the two executables' exit codes must match. Each file in `tests/errors/` must be rejected with a compiler error. Pass a substring to run only matching tests, e.g. `python tests/run_tests.py float`.
 
+### Website
+
+The `public/` folder holds a landing page and an in-browser compiler (`/compiler`) that shows the tokens, syntax tree, three-address code and LLVM IR for any program. The pages call `api/compile.py`, a Vercel serverless function that runs the compiler from `compiler/pipeline.py`. Vercel has no clang, so the website shows the output but doesn't run the program.
+
+- **Run it locally:** `python dev_server.py`, then open http://127.0.0.1:8000. This serves the same pages and API function that Vercel deploys.
+- **Test it:** `python tests/test_web.py` checks the pages, the examples and the API's responses. It doesn't need clang.
+- **Deploy it:** import the repository in Vercel with the framework preset set to "Other". `vercel.json` sets everything else, so leave the build and output settings empty. There are no dependencies to install.
+
 ## 6. Test Cases & Output
 
 ### Automated test suite

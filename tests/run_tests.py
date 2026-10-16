@@ -6,6 +6,9 @@ an executable. The test passes when both executables exit with the same code.
 
 tests/errors/*.c must be rejected by our compiler with an error.
 
+The examples shown on the website (public/examples/*.c) are checked the same
+way as tests/programs.
+
 Usage: python tests/run_tests.py [name-filter]
 """
 import contextlib
@@ -79,6 +82,7 @@ def main():
 
     name_filter = sys.argv[1] if len(sys.argv) > 1 else ''
     cases = [(p, check_program) for p in sorted((ROOT / 'programs').glob('*.c'))]
+    cases += [(p, check_program) for p in sorted((ROOT.parent / 'public' / 'examples').glob('*.c'))]
     cases += [(p, check_error) for p in sorted((ROOT / 'errors').glob('*.c'))]
     cases = [(p, check) for p, check in cases if name_filter in p.stem]
 
