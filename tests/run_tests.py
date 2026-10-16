@@ -76,11 +76,12 @@ def check_error(path, workdir):
     except (LexerError, ParseError, SemanticError) as e:
         if not marked:
             return None
-        reported = re.search(r'line (\d+)', str(e))
-        if reported is None:
+        # The last mention is the error's own line (see pipeline.error_line)
+        reported = re.findall(r'line (\d+)', str(e))
+        if not reported:
             return f"error has no line number, expected line {marked[0]}: {e}"
-        if int(reported.group(1)) != marked[0]:
-            return f"error reported on line {reported.group(1)}, expected line {marked[0]}: {e}"
+        if int(reported[-1]) != marked[0]:
+            return f"error reported on line {reported[-1]}, expected line {marked[0]}: {e}"
         return None
     except Exception as e:
         return f"crashed instead of reporting an error: {type(e).__name__}: {e}"

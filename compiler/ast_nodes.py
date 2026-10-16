@@ -39,6 +39,21 @@ class WhileStmt(ASTNode):
         self.condition = condition
         self.body = body
 
+class DoWhileStmt(ASTNode):
+    def __init__(self, body, condition):
+        self.body = body
+        self.condition = condition
+
+class SwitchStmt(ASTNode):
+    def __init__(self, expr, cases):
+        self.expr = expr
+        self.cases = cases # SwitchCase list, in source order
+
+class SwitchCase(ASTNode):
+    def __init__(self, value, statements):
+        self.value = value # constant expression, or None for default
+        self.statements = statements # run in order, falling through to the next case
+
 class ForStmt(ASTNode):
     def __init__(self, init, condition, increment, body):
         self.init = init
@@ -57,15 +72,17 @@ class ContinueStmt(ASTNode):
     pass
 
 class AssignStmt(ASTNode):
-    def __init__(self, name, expr):
+    def __init__(self, name, expr, op=None):
         self.name = name
         self.expr = expr
+        self.op = op # '+', '-', '*', '/' or '%' for compound assignment such as +=
 
 class ArrayAssignStmt(ASTNode):
-    def __init__(self, name, index_expr, expr):
+    def __init__(self, name, index_expr, expr, op=None):
         self.name = name
         self.index_expr = index_expr
         self.expr = expr
+        self.op = op # as for AssignStmt
 
 class BinOp(ASTNode):
     def __init__(self, left, op, right):
@@ -77,6 +94,20 @@ class UnaryOp(ASTNode):
     def __init__(self, op, expr):
         self.op = op
         self.expr = expr
+
+class DerefAssignStmt(ASTNode):
+    def __init__(self, pointer_expr, expr, op=None):
+        self.pointer_expr = pointer_expr # *pointer_expr = expr
+        self.expr = expr
+        self.op = op # as for AssignStmt
+
+class Deref(ASTNode):
+    def __init__(self, expr):
+        self.expr = expr # *expr
+
+class AddressOf(ASTNode):
+    def __init__(self, expr):
+        self.expr = expr # &expr: a Var, ArrayAccess or Deref
 
 class Var(ASTNode):
     def __init__(self, name):

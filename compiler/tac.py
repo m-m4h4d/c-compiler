@@ -1,4 +1,5 @@
 from ast_nodes import *
+from optimizer import fold_constant
 
 class TACGenerator:
     def __init__(self, ast):
@@ -86,6 +87,42 @@ class TACGenerator:
         self.emit(f"goto {label_start}")
         self.emit(f"{label_end}:")
 
+    def visit_DoWhileStmt(self, node):
+        label_start = self.new_label()
+        label_cond = self.new_label()
+        label_end = self.new_label()
+
+        self.emit(f"{label_start}:")
+        # continue goes to the condition, which decides whether to loop again
+        self.visit_loop_body(node.body, label_cond, label_end)
+        self.emit(f"{label_cond}:")
+        cond_val = self.visit(node.condition)
+        self.emit(f"if_false {cond_val} goto {label_end}")
+        self.emit(f"goto {label_start}")
+        self.emit(f"{label_end}:")
+
+    def visit_SwitchStmt(self, node):
+        value = self.visit(node.expr)
+        label_end = self.new_label()
+        case_labels = [self.new_label() for _ in node.cases]
+        default_label = label_end
+        for case, label in zip(node.cases, case_labels):
+            if case.value is None:
+                default_label = label
+            else:
+                self.emit(f"if {value} == {fold_constant(case.value).value} goto {label}")
+        self.emit(f"goto {default_label}")
+
+        # break leaves the switch; continue still belongs to the enclosing loop
+        enclosing_continue = self.loops[-1][0] if self.loops else None
+        self.loops.append((enclosing_continue, label_end))
+        for case, label in zip(node.cases, case_labels):
+            self.emit(f"{label}:") # falls through from the case above
+            for stmt in case.statements:
+                self.visit(stmt)
+        self.loops.pop()
+        self.emit(f"{label_end}:")
+
     def visit_ForStmt(self, node):
         self.visit(node.init)
         label_start = self.new_label()
@@ -123,13 +160,53 @@ class TACGenerator:
 
     def visit_AssignStmt(self, node):
         val = self.visit(node.expr)
+        if node.op:
+            temp = self.new_temp()
+            self.emit(f"{temp} = {node.name} {node.op} {val}")
+            val = temp
         self.emit(f"{node.name} = {val}")
         return node.name
 
     def visit_ArrayAssignStmt(self, node):
+        # The index is evaluated once, even for a compound assignment
         idx_val = self.visit(node.index_expr)
         val = self.visit(node.expr)
+        if node.op:
+            old = self.new_temp()
+            self.emit(f"{old} = {node.name}[{idx_val}]")
+            temp = self.new_temp()
+            self.emit(f"{temp} = {old} {node.op} {val}")
+            val = temp
         self.emit(f"{node.name}[{idx_val}] = {val}")
+
+    def visit_DerefAssignStmt(self, node):
+        ptr = self.visit(node.pointer_expr)
+        val = self.visit(node.expr)
+        if node.op:
+            old = self.new_temp()
+            self.emit(f"{old} = *{ptr}")
+            temp = self.new_temp()
+            self.emit(f"{temp} = {old} {node.op} {val}")
+            val = temp
+        self.emit(f"*{ptr} = {val}")
+
+    def visit_Deref(self, node):
+        ptr = self.visit(node.expr)
+        temp = self.new_temp()
+        self.emit(f"{temp} = *{ptr}")
+        return temp
+
+    def visit_AddressOf(self, node):
+        target = node.expr
+        temp = self.new_temp()
+        if isinstance(target, Var):
+            self.emit(f"{temp} = &{target.name}")
+        elif isinstance(target, ArrayAccess):
+            idx = self.visit(target.index_expr)
+            self.emit(f"{temp} = &{target.name}[{idx}]")
+        else:
+            return self.visit(target.expr) # &*p is p
+        return temp
 
     def visit_BinOp(self, node):
         left_val = self.visit(node.left)

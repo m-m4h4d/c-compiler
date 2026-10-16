@@ -1,3 +1,4 @@
+import copy
 import math
 from ast_nodes import *
 
@@ -13,6 +14,11 @@ def c_div(lval, rval):
 def c_rem(lval, rval):
     # The remainder takes the sign of the dividend, so (a/b)*b + a%b == a
     return lval - rval * c_div(lval, rval)
+
+def fold_constant(node):
+    """The Number a constant expression folds to, or None. Leaves node untouched."""
+    folded = Optimizer(None).visit(copy.deepcopy(node))
+    return folded if isinstance(folded, Number) else None
 
 class Optimizer:
     def __init__(self, ast):
@@ -48,15 +54,26 @@ class Optimizer:
         return node
 
     def visit_Block(self, node):
+        node.statements = self.optimize_statements(node.statements)
+        return node
+
+    def optimize_statements(self, statements):
         optimized_statements = []
-        for stmt in node.statements:
+        for stmt in statements:
             opt_stmt = self.visit(stmt)
             if opt_stmt:
                 optimized_statements.append(opt_stmt)
             # Dead code elimination: nothing after a return, break or continue can run
             if isinstance(opt_stmt, (ReturnStmt, BreakStmt, ContinueStmt)):
                 break
-        node.statements = optimized_statements
+        return optimized_statements
+
+    def visit_SwitchStmt(self, node):
+        node.expr = self.visit(node.expr)
+        for case in node.cases:
+            case.value = self.visit(case.value)
+            # Each case is cut separately: the next case label is reachable again
+            case.statements = self.optimize_statements(case.statements)
         return node
 
     def visit_IfStmt(self, node):
@@ -80,6 +97,12 @@ class Optimizer:
         # Dead code elimination if condition is const 0
         if isinstance(node.condition, Number) and node.condition.value == 0:
             return None
+        return node
+
+    def visit_DoWhileStmt(self, node):
+        # Even with a false condition the body runs once, so the loop is never removed
+        node.body = self.visit(node.body)
+        node.condition = self.visit(node.condition)
         return node
 
     def visit_ForStmt(self, node):
@@ -162,6 +185,20 @@ class Optimizer:
             elif node.op == '!':
                 return Number(1 if not node.expr.value else 0, 'int')
         return node
+
+    def visit_DerefAssignStmt(self, node):
+        node.pointer_expr = self.visit(node.pointer_expr)
+        node.expr = self.visit(node.expr)
+        return node
+
+    def visit_Deref(self, node):
+        node.expr = self.visit(node.expr)
+        return node
+
+    def visit_AddressOf(self, node):
+        if isinstance(node.expr, ArrayAccess):
+            node.expr.index_expr = self.visit(node.expr.index_expr)
+        return node # the operand itself must stay a variable or element, never a folded value
 
     def visit_Var(self, node):
         return node

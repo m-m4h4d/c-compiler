@@ -76,6 +76,13 @@ def run_checks(base):
           and 'ast' in result['stages'] and 'tac' not in result['stages'])
     check("a semantic error reports its line", result['error']['line'] == 3)
 
+    _, result = compile_source(base, 'int main() {\n    switch (1) {\n        case 1:\n            break;\n        case 1:\n            break;\n    }\n    return 0;\n}\n')
+    check("an error that mentions another line reports its own", result['error']['line'] == 5)
+
+    _, result = compile_source(base, 'int main() {\n    double d = 1.5;\n    return d % 2;\n}\n')
+    check("a type error is a semantic error with its line", result['error']['phase'] == 'semantic'
+          and result['error']['line'] == 3 and 'integers' in result['error']['message'])
+
     _, result = compile_source(base, 'int main() { return ' + '(' * 5000 + '1' + ')' * 5000 + '; }')
     check("deep nesting is an error, not a crash", not result['ok'] and not result['error']['internal'])
 
