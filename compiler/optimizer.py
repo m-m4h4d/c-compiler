@@ -200,6 +200,24 @@ class Optimizer:
             node.expr.index_expr = self.visit(node.expr.index_expr)
         return node # the operand itself must stay a variable or element, never a folded value
 
+    def visit_Member(self, node):
+        node.base = self.visit(node.base)
+        return node
+
+    def visit_Index(self, node):
+        node.base = self.visit(node.base)
+        node.index_expr = self.visit(node.index_expr)
+        return node
+
+    def visit_LValueAssignStmt(self, node):
+        node.target = self.visit(node.target) # Member and Index stay assignable
+        node.expr = self.visit(node.expr)
+        return node
+
+    def visit_LValueIncDec(self, node):
+        node.target = self.visit(node.target)
+        return node
+
     def visit_Var(self, node):
         return node
 

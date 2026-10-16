@@ -36,7 +36,10 @@ class TACGenerator:
 
     def visit_Program(self, node):
         for decl in node.declarations:
-            if isinstance(decl, VarDecl):
+            if isinstance(decl, StructDecl):
+                fields = ', '.join(f"{c_type} {name}" for c_type, name in decl.fields)
+                self.emit(f"struct {decl.name} {{ {fields} }}")
+            elif isinstance(decl, VarDecl):
                 init = f" = {self.visit(decl.init_expr)}" if decl.init_expr else ""
                 self.emit(f"global {decl.name}{init}")
             elif isinstance(decl, ArrayDecl):
@@ -201,12 +204,56 @@ class TACGenerator:
         temp = self.new_temp()
         if isinstance(target, Var):
             self.emit(f"{temp} = &{target.name}")
-        elif isinstance(target, ArrayAccess):
-            idx = self.visit(target.index_expr)
-            self.emit(f"{temp} = &{target.name}[{idx}]")
-        else:
+        elif isinstance(target, Deref):
             return self.visit(target.expr) # &*p is p
+        else:
+            self.emit(f"{temp} = &{self.place(target)}")
         return temp
+
+    def place(self, node):
+        """Text for an assignable place, evaluating any index or pointer inside it."""
+        if isinstance(node, Var):
+            return node.name
+        if isinstance(node, ArrayAccess):
+            return f"{node.name}[{self.visit(node.index_expr)}]"
+        if isinstance(node, Deref):
+            return f"*{self.visit(node.expr)}"
+        if isinstance(node, Member):
+            if node.arrow:
+                return f"{self.visit(node.base)}->{node.field}"
+            base = self.place(node.base) if isinstance(node.base, (Var, ArrayAccess, Deref, Member, Index)) else self.visit(node.base)
+            return f"{base}.{node.field}"
+        base = self.visit(node.base)
+        return f"{base}[{self.visit(node.index_expr)}]"
+
+    def visit_Member(self, node):
+        temp = self.new_temp()
+        self.emit(f"{temp} = {self.place(node)}")
+        return temp
+
+    visit_Index = visit_Member
+
+    def visit_LValueAssignStmt(self, node):
+        target = self.place(node.target)
+        val = self.visit(node.expr)
+        if node.op:
+            old = self.new_temp()
+            self.emit(f"{old} = {target}")
+            temp = self.new_temp()
+            self.emit(f"{temp} = {old} {node.op} {val}")
+            val = temp
+        self.emit(f"{target} = {val}")
+
+    def visit_LValueIncDec(self, node):
+        target = self.place(node.target)
+        old = self.new_temp()
+        self.emit(f"{old} = {target}")
+        self.emit(f"{target} = {old} {'+' if node.op == '++' else '-'} 1")
+        if node.prefix:
+            new = self.new_temp()
+            self.emit(f"{new} = {target}")
+            return new
+        return old
 
     def visit_BinOp(self, node):
         left_val = self.visit(node.left)

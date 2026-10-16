@@ -168,6 +168,11 @@
       case 'AssignStmt': return `AssignStmt ${node.name} ${node.op || ''}=`;
       case 'ArrayAssignStmt': return `ArrayAssignStmt ${node.name}[] ${node.op || ''}=`;
       case 'FuncCall': return `FuncCall ${node.name}`;
+      case 'StructDecl': return `StructDecl ${node.name} { ${node.fields.map((f) => f.join(' ')).join('; ')} }`;
+      case 'Member': return `Member ${node.arrow ? '->' : '.'}${node.field}`;
+      case 'Index': return 'Index []';
+      case 'LValueAssignStmt': return `LValueAssignStmt ${node.op || ''}=`;
+      case 'LValueIncDec': return `LValueIncDec ${node.prefix ? node.op + 'x' : 'x' + node.op}`;
       case 'Deref': return 'Deref *';
       case 'AddressOf': return 'AddressOf &';
       case 'DerefAssignStmt': return `DerefAssignStmt *ptr ${node.op || ''}=`;
