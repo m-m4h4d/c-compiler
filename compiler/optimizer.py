@@ -1,4 +1,18 @@
+import math
 from ast_nodes import *
+
+def wrap_i32(value):
+    # Match the two's-complement wraparound of the generated i32 arithmetic
+    return (value + 2**31) % 2**32 - 2**31
+
+def c_div(lval, rval):
+    # C integer division truncates toward zero; Python's // floors
+    q = abs(lval) // abs(rval)
+    return -q if (lval < 0) != (rval < 0) else q
+
+def c_rem(lval, rval):
+    # The remainder takes the sign of the dividend, so (a/b)*b + a%b == a
+    return lval - rval * c_div(lval, rval)
 
 class Optimizer:
     def __init__(self, ast):
@@ -76,9 +90,8 @@ class Optimizer:
         
         # Dead code elimination
         if isinstance(node.condition, Number) and node.condition.value == 0:
-            # Init is executed, then loop ends. In C, if init is declaration, we just keep init.
-            # But to keep AST simple, we'll just return init if it's an assignment/decl
-            return node.init 
+            # Init still runs once; wrap it in a block so a declaration stays scoped to the loop
+            return Block([node.init]) if node.init else None
         return node
 
     def visit_ReturnStmt(self, node):
@@ -104,27 +117,37 @@ class Optimizer:
             lval = node.left.value
             rval = node.right.value
             op = node.op
-            val_type = 'float' if node.left.val_type == 'float' or node.right.val_type == 'float' else 'int'
+            is_float = node.left.val_type == 'float' or node.right.val_type == 'float'
             
-            try:
+            if op in ('+', '-', '*', '/', '%'):
+                if is_float:
+                    lval, rval = float(lval), float(rval)
+                    if op == '+': result = lval + rval
+                    elif op == '-': result = lval - rval
+                    elif op == '*': result = lval * rval
+                    elif rval == 0.0: return node # leave inf/NaN to run time
+                    elif op == '/': result = lval / rval
+                    else: result = math.fmod(lval, rval)
+                    return Number(result, 'float')
                 if op == '+': result = lval + rval
                 elif op == '-': result = lval - rval
                 elif op == '*': result = lval * rval
-                elif op == '/': result = lval / rval if val_type == 'float' else lval // rval
-                elif op == '%': result = lval % rval
-                elif op == '==': result = 1 if lval == rval else 0
-                elif op == '!=': result = 1 if lval != rval else 0
-                elif op == '<': result = 1 if lval < rval else 0
-                elif op == '<=': result = 1 if lval <= rval else 0
-                elif op == '>': result = 1 if lval > rval else 0
-                elif op == '>=': result = 1 if lval >= rval else 0
-                elif op == '&&': result = 1 if lval and rval else 0
-                elif op == '||': result = 1 if lval or rval else 0
-                else: return node
-                
-                return Number(result, val_type)
-            except ZeroDivisionError:
-                pass # don't fold division by zero
+                elif rval == 0: return node # don't fold division by zero
+                elif op == '/': result = c_div(lval, rval)
+                else: result = c_rem(lval, rval)
+                return Number(wrap_i32(result), 'int')
+            
+            # Comparisons and logical operators always produce an int 0 or 1
+            if op == '==': result = 1 if lval == rval else 0
+            elif op == '!=': result = 1 if lval != rval else 0
+            elif op == '<': result = 1 if lval < rval else 0
+            elif op == '<=': result = 1 if lval <= rval else 0
+            elif op == '>': result = 1 if lval > rval else 0
+            elif op == '>=': result = 1 if lval >= rval else 0
+            elif op == '&&': result = 1 if lval and rval else 0
+            elif op == '||': result = 1 if lval or rval else 0
+            else: return node
+            return Number(result, 'int')
         return node
 
     def visit_UnaryOp(self, node):
@@ -133,6 +156,8 @@ class Optimizer:
         # Constant Folding
         if isinstance(node.expr, Number):
             if node.op == '-':
+                if node.expr.val_type == 'int':
+                    return Number(wrap_i32(-node.expr.value), 'int')
                 return Number(-node.expr.value, node.expr.val_type)
             elif node.op == '!':
                 return Number(1 if not node.expr.value else 0, 'int')

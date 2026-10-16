@@ -34,7 +34,13 @@ class TACGenerator:
 
     def visit_Program(self, node):
         for decl in node.declarations:
-            self.visit(decl)
+            if isinstance(decl, VarDecl):
+                init = f" = {self.visit(decl.init_expr)}" if decl.init_expr else ""
+                self.emit(f"global {decl.name}{init}")
+            elif isinstance(decl, ArrayDecl):
+                self.emit(f"global_array {decl.name}, {decl.size}")
+            else:
+                self.visit(decl)
 
     def visit_FunctionDecl(self, node):
         self.emit(f"func {node.name}:")
@@ -85,8 +91,9 @@ class TACGenerator:
         label_end = self.new_label()
         
         self.emit(f"{label_start}:")
-        cond_val = self.visit(node.condition)
-        self.emit(f"if_false {cond_val} goto {label_end}")
+        if node.condition is not None: # an empty condition loops forever
+            cond_val = self.visit(node.condition)
+            self.emit(f"if_false {cond_val} goto {label_end}")
         self.visit(node.body)
         self.visit(node.increment)
         self.emit(f"goto {label_start}")
@@ -121,6 +128,16 @@ class TACGenerator:
         temp = self.new_temp()
         self.emit(f"{temp} = {node.op} {val}")
         return temp
+
+    def visit_IncDec(self, node):
+        arith = '+' if node.op == '++' else '-'
+        if node.prefix:
+            self.emit(f"{node.name} = {node.name} {arith} 1")
+            return node.name
+        old = self.new_temp()
+        self.emit(f"{old} = {node.name}")
+        self.emit(f"{node.name} = {node.name} {arith} 1")
+        return old
 
     def visit_Var(self, node):
         return node.name

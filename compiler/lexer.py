@@ -18,6 +18,7 @@ class Lexer:
         'int': 'INT',
         'float': 'FLOAT',
         'double': 'DOUBLE',
+        'void': 'VOID',
         'if': 'IF',
         'else': 'ELSE',
         'while': 'WHILE',
@@ -26,6 +27,8 @@ class Lexer:
     }
 
     token_specification = [
+        ('COMMENT',  r'//[^\n]*|/\*[\s\S]*?\*/'), # Line and block comments
+        ('UNTERMINATED_COMMENT', r'/\*'),  # Block comment with no closing */
         ('INVALID_ID', r'\d+[A-Za-z_][A-Za-z0-9_]*'), # Identifiers starting with a number (invalid)
         ('NUMBER',   r'\d+(\.\d*)?'),      # Integer or decimal number
         ('ID',       r'[A-Za-z_][A-Za-z0-9_]*'), # Identifiers
@@ -35,6 +38,8 @@ class Lexer:
         ('GE',       r'>='),
         ('AND',      r'&&'),
         ('OR',       r'\|\|'),
+        ('INC',      r'\+\+'),
+        ('DEC',      r'--'),
         ('ASSIGN',   r'='),
         ('LT',       r'<'),
         ('GT',       r'>'),
@@ -89,6 +94,14 @@ class Lexer:
                 line_num += 1
             elif kind == 'SKIP':
                 pass
+            elif kind == 'COMMENT':
+                # Block comments can span lines; keep line numbers accurate
+                newlines = value.count('\n')
+                if newlines:
+                    line_num += newlines
+                    line_start = mo.start() + value.rfind('\n') + 1
+            elif kind == 'UNTERMINATED_COMMENT':
+                raise LexerError(f"Unterminated comment starting on line {line_num}")
             elif kind == 'MISMATCH':
                 raise LexerError(f'{value!r} unexpected on line {line_num}')
             else:

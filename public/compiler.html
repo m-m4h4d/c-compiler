@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Compiler - C Subset Compiler</title>
+  <meta name="description" content="Compile a C program in the browser and inspect its tokens, syntax tree, three-address code and LLVM IR.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23E6F0E3'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='16' font-weight='bold' text-anchor='middle' fill='%231F2B25'%3Ecc%3C/text%3E%3C/svg%3E">
+  <style>
+    .workspace {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 1.5rem;
+      padding-top: 1.5rem;
+    }
+
+    @media (min-width: 64rem) {
+      .workspace { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
+    }
+
+    .pane-title { font-size: 1.125rem; }
+
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.75rem 1.25rem;
+      margin-top: 0.75rem;
+    }
+
+    .field { display: flex; align-items: center; gap: 0.5rem; font-size: 0.9375rem; }
+
+    select {
+      font: inherit;
+      min-height: 2.25rem;
+      padding: 0.25rem 2rem 0.25rem 0.6rem;
+      color: var(--ink);
+      background: var(--paper) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%2356635C' stroke-width='1.5' fill='none'/%3E%3C/svg%3E") no-repeat right 0.65rem center;
+      border: 1px solid var(--rule);
+      border-radius: 6px;
+      appearance: none;
+    }
+
+    input[type="checkbox"] { width: 1.05rem; height: 1.05rem; accent-color: var(--pen); margin: 0; }
+
+    .compile-group { margin-left: auto; display: flex; align-items: center; gap: 0.6rem; }
+    .compile-group kbd { font-size: 0.8125rem; color: var(--ink-soft); }
+
+    /* Editor: a line-number gutter beside a plain textarea */
+    .editor {
+      --line: 1.5rem;
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      margin-top: 0.5rem;
+      height: min(36rem, 70vh);
+      border: 1px solid var(--rule);
+      border-radius: 2px;
+      background: var(--paper);
+      overflow: hidden;
+    }
+
+    .editor:focus-within { border-color: var(--pen); box-shadow: 0 0 0 1px var(--pen); }
+
+    .gutter {
+      margin: 0;
+      padding: 0.75rem 0.6rem 0.75rem 0.75rem;
+      font-family: var(--mono);
+      font-size: 0.875rem;
+      line-height: var(--line);
+      text-align: right;
+      color: var(--ink-soft);
+      background: var(--band);
+      border-right: 1px solid var(--rule);
+      overflow: hidden;
+      user-select: none;
+      min-width: 3.25rem;
+    }
+
+    .gutter span { display: block; }
+    .gutter .marked { color: var(--red-pencil); font-weight: 500; text-decoration: underline wavy var(--red-pencil); text-underline-offset: 0.2em; }
+
+    .editor textarea {
+      margin: 0;
+      padding: 0.75rem;
+      border: 0;
+      resize: none;
+      outline: none;
+      font-size: 0.875rem;
+      line-height: var(--line);
+      color: var(--ink);
+      background: transparent;
+      white-space: pre;
+      overflow: auto;
+      tab-size: 4;
+    }
+
+    .status {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      margin-top: 0.75rem;
+      min-height: 2.25rem;
+      font-size: 0.9375rem;
+      color: var(--ink-soft);
+    }
+
+    .status.error {
+      padding: 0.75rem 1rem;
+      color: var(--ink);
+      background: var(--red-wash);
+      border-left: 3px solid var(--red-pencil);
+    }
+
+    .status.error strong { color: var(--red-pencil); font-weight: 600; }
+    .status.error .detail { margin-top: 0.2rem; font-family: var(--mono); font-size: 0.875rem; }
+
+    /* Output tabs */
+    .tabs {
+      display: flex;
+      gap: 0.25rem;
+      margin-top: 0.75rem;
+      border-bottom: 1px solid var(--rule);
+      overflow-x: auto;
+    }
+
+    .tab {
+      flex: none;
+      padding: 0.55rem 0.85rem;
+      font: inherit;
+      font-size: 0.9375rem;
+      color: var(--ink-soft);
+      background: none;
+      border: 0;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -1px;
+      cursor: pointer;
+    }
+
+    .tab:hover { color: var(--ink); }
+    .tab[aria-selected="true"] { color: var(--ink); font-weight: 500; border-bottom-color: var(--pen); }
+
+    .panel-bar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.5rem 1rem;
+      min-height: 3rem;
+      padding: 0.5rem 0;
+      font-size: 0.9375rem;
+      color: var(--ink-soft);
+    }
+
+    .output {
+      height: min(36rem, 70vh);
+      border: 1px solid var(--rule);
+      border-radius: 2px;
+      overflow: auto;
+      background: var(--paper);
+    }
+
+    .output .listing { min-height: 100%; overflow: visible; padding-left: 1rem; padding-right: 1rem; }
+
+    .output.stale .listing { opacity: 0.55; }
+
+    .empty {
+      padding: 1.5rem;
+      max-width: 44ch;
+      color: var(--ink-soft);
+    }
+
+    .tok-type { color: var(--pen); }
+    .dim { color: var(--ink-soft); }
+
+    @media (max-width: 40rem) {
+      .compile-group { margin-left: 0; width: 100%; }
+      .compile-group .button { flex: 1; }
+      .compile-group kbd { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap">
+      <a class="wordmark" href="/">c-compiler</a>
+      <nav class="site-nav" aria-label="Main">
+        <a href="/compiler" aria-current="page">Compiler</a>
+        <a href="https://github.com/m-m4h4d/c-compiler">Source</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="workspace wrap">
+    <section aria-labelledby="source-title">
+      <h1 class="pane-title" id="source-title">C source</h1>
+      <div class="toolbar">
+        <label class="field">
+          Example
+          <select id="example">
+            <option value="tour.c">A tour of the language</option>
+            <option value="fibonacci.c">Recursive Fibonacci</option>
+            <option value="floats.c">Floating point</option>
+            <option value="short_circuit.c">Short-circuit logic</option>
+            <option value="globals.c">Globals and void functions</option>
+          </select>
+        </label>
+        <label class="field">
+          <input type="checkbox" id="optimize" checked>
+          Fold constants and remove dead code
+        </label>
+        <div class="compile-group">
+          <kbd id="shortcut">Ctrl+Enter</kbd>
+          <button class="button small" id="compile" type="button">Compile</button>
+        </div>
+      </div>
+
+      <p class="status" id="status" role="status" aria-live="polite"></p>
+      <div class="editor">
+        <pre class="gutter" id="gutter" aria-hidden="true"></pre>
+        <textarea id="source" spellcheck="false" autocapitalize="off" autocomplete="off" wrap="off" aria-label="C source code" aria-describedby="status"></textarea>
+      </div>
+    </section>
+
+    <section aria-labelledby="output-title">
+      <h2 class="pane-title" id="output-title">Compiler output</h2>
+      <div class="tabs" role="tablist" aria-labelledby="output-title">
+        <button class="tab" role="tab" id="tab-tokens" aria-controls="panel" aria-selected="false" tabindex="-1" data-stage="tokens">Tokens</button>
+        <button class="tab" role="tab" id="tab-ast" aria-controls="panel" aria-selected="false" tabindex="-1" data-stage="ast">Syntax tree</button>
+        <button class="tab" role="tab" id="tab-tac" aria-controls="panel" aria-selected="false" tabindex="-1" data-stage="tac">Three-address code</button>
+        <button class="tab" role="tab" id="tab-llvm" aria-controls="panel" aria-selected="true" tabindex="0" data-stage="llvm">LLVM IR</button>
+      </div>
+      <div class="panel-bar">
+        <span id="panel-note"></span>
+        <button class="button small quiet" id="download" type="button" hidden>Download output.ll</button>
+      </div>
+      <div class="output" id="panel" role="tabpanel" aria-labelledby="tab-llvm" tabindex="0"></div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <p>Built for the Compiler Construction course, Spring 2026.</p>
+      <p>Muhammad Mahad, Abdul Moiz and Bashar</p>
+    </div>
+  </footer>
+
+  <script src="/compiler.js"></script>
+</body>
+</html>
