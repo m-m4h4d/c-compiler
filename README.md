@@ -125,16 +125,57 @@ The `public/` folder holds a landing page and an in-browser compiler (`/compiler
 
 ### Automated test suite
 
-`tests/run_tests.py` runs 16 end-to-end programs and 11 error cases:
+`python tests/run_tests.py` runs 117 tests, and `python tests/test_web.py` checks the website and its API separately.
 
-- **`tests/programs/`**: `arrays.c`, `comments.c`, `comparisons.c`, `early_return.c`, `floats.c`, `folding.c`, `for_loops.c`, `general.c`, `globals.c`, `incdec.c`, `logical.c`, `recursion.c`, `shadowing.c`, `short_circuit.c`, `stack_growth.c`, `void_functions.c`
-- **`tests/errors/`**: `global_non_constant.c`, `incdec_array.c`, `invalid_identifier.c`, `missing_semicolon.c`, `redeclared_var.c`, `undeclared_var.c`, `unterminated_comment.c`, `void_return_value.c`, `void_used_as_value.c`, `void_variable.c`, `wrong_arg_count.c`
+- **27 programs** in `tests/programs/` and **9 website examples** in `public/examples/` are each compiled twice: natively by clang, and through this compiler to LLVM IR that clang then builds. The test passes when both executables exit with the same status, so every expected result comes from a real C compiler.
+- **81 error cases** in `tests/errors/` must be rejected with a lexer, parser or semantic error. Where a file marks a line with a `// error` comment, the error must be reported on that line. An internal crash counts as a failure.
 
-### Worked example (`compiler/test.c`)
+| Area | Program tests |
+| :--- | :--- |
+| Expressions and types | `comparisons.c`, `logical.c`, `short_circuit.c`, `floats.c`, `implicit_conversions.c`, `folding.c` |
+| Statements and control flow | `early_return.c`, `for_loops.c`, `break_continue.c`, `break_search.c`, `do_while.c`, `switch.c` |
+| Assignment and increments | `compound_assignment.c`, `incdec.c`, `incdec_places.c` |
+| Variables, scope and functions | `shadowing.c`, `globals.c`, `void_functions.c`, `recursion.c`, `comments.c`, `stack_growth.c` |
+| Arrays and pointers | `arrays.c`, `pointers.c` |
+| Structs and initializers | `structs.c`, `init_lists.c`, `designated_initializers.c` |
+| Combined | `general.c` |
+| Website examples | `calculator.c`, `fibonacci.c`, `floats.c`, `globals.c`, `pointers.c`, `primes.c`, `short_circuit.c`, `structs.c`, `tour.c` |
 
-This program exercises arithmetic, constant folding (`5 + 3` becomes `8`), loops, dead code elimination (the `if (0)` block is removed), function calls and arrays. The compiled executable exits with status 165 (30 + 80 + 55).
+<details>
+<summary>Error tests by area</summary>
 
-**Source Code:**
+| Area | Error tests |
+| :--- | :--- |
+| Lexical and syntax errors (14) | `array_without_size.c`, `assign_to_value.c`, `break_missing_semicolon.c`, `case_outside_switch.c`, `compound_missing_operand.c`, `do_while_missing_semicolon.c`, `do_without_while.c`, `invalid_identifier.c`, `missing_semicolon.c`, `struct_defined_in_function.c`, `switch_statement_before_case.c`, `unterminated_comment.c`, `void_pointer.c`, `void_variable.c` |
+| Names, scopes and functions (12) | `assign_to_function.c`, `compound_undeclared.c`, `do_while_body_scope.c`, `duplicate_function.c`, `duplicate_param.c`, `global_non_constant.c`, `redeclared_var.c`, `undeclared_function.c`, `undeclared_var.c`, `void_return_value.c`, `void_used_as_value.c`, `wrong_arg_count.c` |
+| Loops and switch (8) | `break_outside_loop.c`, `continue_outside_loop.c`, `switch_case_not_constant.c`, `switch_continue_outside_loop.c`, `switch_double_value.c`, `switch_duplicate_case.c`, `switch_float_case.c`, `switch_two_defaults.c` |
+| Types (10) | `array_as_value.c`, `array_size_float.c`, `array_size_zero.c`, `compound_mod_float.c`, `compound_on_array.c`, `float_index.c`, `float_index_assign.c`, `incdec_array.c`, `mod_double.c`, `not_an_array.c` |
+| Pointers (10) | `address_of_array.c`, `address_of_value.c`, `deref_assign_non_pointer.c`, `deref_non_pointer.c`, `incompatible_pointers.c`, `int_to_pointer.c`, `pointer_argument_type.c`, `pointer_multiply.c`, `pointer_plus_pointer.c`, `pointer_to_int.c` |
+| Structs (13) | `struct_arithmetic.c`, `struct_arrow_on_struct.c`, `struct_as_condition.c`, `struct_assign_array_field.c`, `struct_compare.c`, `struct_contains_itself.c`, `struct_dot_on_pointer.c`, `struct_duplicate_field.c`, `struct_increment.c`, `struct_mismatched_types.c`, `struct_redefined.c`, `struct_unknown_field.c`, `struct_unknown_type.c` |
+| Initializers (14) | `designator_field_on_array.c`, `designator_index_on_struct.c`, `designator_not_constant.c`, `designator_out_of_bounds.c`, `designator_runs_past_end.c`, `designator_unknown_field.c`, `designator_wrong_type.c`, `init_array_without_braces.c`, `init_empty_unsized_array.c`, `init_global_not_constant.c`, `init_scalar_list.c`, `init_too_many_elements.c`, `init_too_many_fields.c`, `init_wrong_type.c` |
+
+</details>
+
+### Sample diagnostics
+
+Every error reports the line it was found on, and the website also names the phase that found it. These are the compiler's messages for some of the error tests above:
+
+| Test | Message |
+| :--- | :--- |
+| `undeclared_var.c` | Undeclared variable 'y' at line 2 |
+| `missing_semicolon.c` | Expected SEMI, found RETURN at line 3 |
+| `switch_duplicate_case.c` | Duplicate case value 1 (first used on line 4) at line 6 |
+| `mod_double.c` | Operands of '%' must be integers, not double and int at line 3 |
+| `incompatible_pointers.c` | Initializer of 'f': incompatible pointer types, int* and float* at line 3 |
+| `struct_dot_on_pointer.c` | '.' needs a struct, not struct Point*; use '->' on a pointer to a struct at line 8 |
+| `init_too_many_fields.c` | Initializer of 'p': too many values for struct Point at line 7 |
+| `designator_out_of_bounds.c` | Initializer of 'a': designator [3] is outside int[3] at line 2 |
+
+## 7. Worked Examples
+
+### A tour of the original subset (`compiler/test.c`)
+
+Arithmetic, constant folding (`5 + 3` becomes `8`), loops, dead code elimination (the `if (0)` block is removed), function calls and arrays. This is the program behind `compiler/output.tac` and `compiler/output.ll`. The compiled program exits with status 165.
 
 ```c
 int arithmetic() {
@@ -178,7 +219,7 @@ int main() {
 }
 ```
 
-**Generated TAC (`compiler/output.tac`):**
+**Three-address code:**
 
 ```text
 func arithmetic:
@@ -242,7 +283,8 @@ return t15
 end_func
 ```
 
-**Generated LLVM IR (`compiler/output.ll`):**
+<details>
+<summary>LLVM IR</summary>
 
 ```llvm
 ; LLVM IR Generated by Custom Compiler
@@ -345,3 +387,903 @@ entry:
   ret i32 %12
 }
 ```
+
+</details>
+
+### Loops with break, continue and compound assignment (`public/examples/primes.c`)
+
+Counts the primes below 50. The inner `for` loop leaves early with `break`, the outer one skips even numbers with `continue`, and both use `+=`. In the TAC, `continue` jumps to the label just before the increment, so `n++` still runs. The compiled program exits with status 15.
+
+```c
+// Counts the primes below 50. The inner loop breaks as soon as it finds a
+// divisor, and the outer loop uses continue to skip even numbers.
+// The program exits with status 15.
+
+int main() {
+    int count = 1; // 2 is the only even prime
+    for (int n = 3; n < 50; n++) {
+        if (n % 2 == 0) {
+            continue;
+        }
+        int is_prime = 1;
+        for (int d = 3; d * d <= n; d += 2) {
+            if (n % d == 0) {
+                is_prime = 0;
+                break;
+            }
+        }
+        count += is_prime;
+    }
+    return count;
+}
+```
+
+**Three-address code:**
+
+```text
+func main:
+begin_func
+count = 1
+n = 3
+L1:
+t1 = n < 50
+if_false t1 goto L3
+t2 = n % 2
+t3 = t2 == 0
+if_false t3 goto L4
+goto L2
+goto L5
+L4:
+L5:
+is_prime = 1
+d = 3
+L6:
+t4 = d * d
+t5 = t4 <= n
+if_false t5 goto L8
+t6 = n % d
+t7 = t6 == 0
+if_false t7 goto L9
+is_prime = 0
+goto L8
+goto L10
+L9:
+L10:
+L7:
+t8 = d + 2
+d = t8
+goto L6
+L8:
+t9 = count + is_prime
+count = t9
+L2:
+t10 = n
+n = n + 1
+goto L1
+L3:
+return count
+end_func
+```
+
+<details>
+<summary>LLVM IR</summary>
+
+```llvm
+; LLVM IR Generated by Custom Compiler
+declare i32 @printf(i8*, ...)
+
+define i32 @main() {
+entry:
+  %count.addr1 = alloca i32
+  %n.addr2 = alloca i32
+  %is_prime.addr3 = alloca i32
+  %d.addr4 = alloca i32
+  store i32 1, i32* %count.addr1
+  store i32 3, i32* %n.addr2
+  br label %L1
+L1:
+  %1 = load i32, i32* %n.addr2
+  %2 = icmp slt i32 %1, 50
+  %3 = zext i1 %2 to i32
+  %4 = icmp ne i32 %3, 0
+  br i1 %4, label %L2, label %L4
+L2:
+  %5 = load i32, i32* %n.addr2
+  %6 = srem i32 %5, 2
+  %7 = icmp eq i32 %6, 0
+  %8 = zext i1 %7 to i32
+  %9 = icmp ne i32 %8, 0
+  br i1 %9, label %L5, label %L7
+L5:
+  br label %L3
+L7:
+  store i32 1, i32* %is_prime.addr3
+  store i32 3, i32* %d.addr4
+  br label %L8
+L8:
+  %10 = load i32, i32* %d.addr4
+  %11 = load i32, i32* %d.addr4
+  %12 = mul i32 %10, %11
+  %13 = load i32, i32* %n.addr2
+  %14 = icmp sle i32 %12, %13
+  %15 = zext i1 %14 to i32
+  %16 = icmp ne i32 %15, 0
+  br i1 %16, label %L9, label %L11
+L9:
+  %17 = load i32, i32* %n.addr2
+  %18 = load i32, i32* %d.addr4
+  %19 = srem i32 %17, %18
+  %20 = icmp eq i32 %19, 0
+  %21 = zext i1 %20 to i32
+  %22 = icmp ne i32 %21, 0
+  br i1 %22, label %L12, label %L14
+L12:
+  store i32 0, i32* %is_prime.addr3
+  br label %L11
+L14:
+  br label %L10
+L10:
+  %23 = load i32, i32* %d.addr4
+  %24 = add i32 %23, 2
+  store i32 %24, i32* %d.addr4
+  br label %L8
+L11:
+  %25 = load i32, i32* %is_prime.addr3
+  %26 = load i32, i32* %count.addr1
+  %27 = add i32 %26, %25
+  store i32 %27, i32* %count.addr1
+  br label %L3
+L3:
+  %28 = load i32, i32* %n.addr2
+  %29 = add i32 %28, 1
+  store i32 %29, i32* %n.addr2
+  br label %L1
+L4:
+  %30 = load i32, i32* %count.addr1
+  ret i32 %30
+}
+```
+
+</details>
+
+### A switch statement with fall-through (`public/examples/calculator.c`)
+
+Chooses an operation with `switch`. Cases 3 and 4 share a body, case 5 falls through into case 6, and unknown codes reach `default`. The LLVM IR uses its native `switch` instruction. The compiled program exits with status 128.
+
+```c
+// A tiny calculator: each operation code picks a case. Codes 3 and 4 share
+// a body, code 5 falls through into code 6, and unknown codes use default.
+// The program exits with status 128.
+
+int apply(int op, int a, int b) {
+    int result = 0;
+    switch (op) {
+        case 1:
+            result = a + b;
+            break;
+        case 2:
+            result = a - b;
+            break;
+        case 3:
+        case 4:
+            result = a * b;
+            break;
+        case 5:
+            a = a * 2; // no break: falls through into case 6
+        case 6:
+            result = a / b;
+            break;
+        default:
+            result = -1;
+    }
+    return result;
+}
+
+int main() {
+    int total = 0;
+    for (int op = 1; op <= 7; op++) {
+        total += apply(op, 12, 4);
+    }
+    return total; // 16 + 8 + 48 + 48 + 6 + 3 - 1 = 128
+}
+```
+
+**Three-address code:**
+
+```text
+func apply:
+begin_func
+result = 0
+if op == 1 goto L2
+if op == 2 goto L3
+if op == 3 goto L4
+if op == 4 goto L5
+if op == 5 goto L6
+if op == 6 goto L7
+goto L8
+L2:
+t1 = a + b
+result = t1
+goto L1
+L3:
+t2 = a - b
+result = t2
+goto L1
+L4:
+L5:
+t3 = a * b
+result = t3
+goto L1
+L6:
+t4 = a * 2
+a = t4
+L7:
+t5 = a / b
+result = t5
+goto L1
+L8:
+result = -1
+L1:
+return result
+end_func
+
+func main:
+begin_func
+total = 0
+op = 1
+L9:
+t6 = op <= 7
+if_false t6 goto L11
+param op
+param 12
+param 4
+t7 = call apply, 3
+t8 = total + t7
+total = t8
+L10:
+t9 = op
+op = op + 1
+goto L9
+L11:
+return total
+end_func
+```
+
+<details>
+<summary>LLVM IR</summary>
+
+```llvm
+; LLVM IR Generated by Custom Compiler
+declare i32 @printf(i8*, ...)
+
+define i32 @apply(i32 %op_arg, i32 %a_arg, i32 %b_arg) {
+entry:
+  %op.addr1 = alloca i32
+  %a.addr2 = alloca i32
+  %b.addr3 = alloca i32
+  %result.addr4 = alloca i32
+  store i32 %op_arg, i32* %op.addr1
+  store i32 %a_arg, i32* %a.addr2
+  store i32 %b_arg, i32* %b.addr3
+  store i32 0, i32* %result.addr4
+  %1 = load i32, i32* %op.addr1
+  switch i32 %1, label %L8 [ i32 1, label %L2 i32 2, label %L3 i32 3, label %L4 i32 4, label %L5 i32 5, label %L6 i32 6, label %L7 ]
+L2:
+  %2 = load i32, i32* %a.addr2
+  %3 = load i32, i32* %b.addr3
+  %4 = add i32 %2, %3
+  store i32 %4, i32* %result.addr4
+  br label %L1
+L3:
+  %5 = load i32, i32* %a.addr2
+  %6 = load i32, i32* %b.addr3
+  %7 = sub i32 %5, %6
+  store i32 %7, i32* %result.addr4
+  br label %L1
+L4:
+  br label %L5
+L5:
+  %8 = load i32, i32* %a.addr2
+  %9 = load i32, i32* %b.addr3
+  %10 = mul i32 %8, %9
+  store i32 %10, i32* %result.addr4
+  br label %L1
+L6:
+  %11 = load i32, i32* %a.addr2
+  %12 = mul i32 %11, 2
+  store i32 %12, i32* %a.addr2
+  br label %L7
+L7:
+  %13 = load i32, i32* %a.addr2
+  %14 = load i32, i32* %b.addr3
+  %15 = sdiv i32 %13, %14
+  store i32 %15, i32* %result.addr4
+  br label %L1
+L8:
+  store i32 -1, i32* %result.addr4
+  br label %L1
+L1:
+  %16 = load i32, i32* %result.addr4
+  ret i32 %16
+}
+
+define i32 @main() {
+entry:
+  %total.addr1 = alloca i32
+  %op.addr2 = alloca i32
+  store i32 0, i32* %total.addr1
+  store i32 1, i32* %op.addr2
+  br label %L9
+L9:
+  %1 = load i32, i32* %op.addr2
+  %2 = icmp sle i32 %1, 7
+  %3 = zext i1 %2 to i32
+  %4 = icmp ne i32 %3, 0
+  br i1 %4, label %L10, label %L12
+L10:
+  %5 = load i32, i32* %op.addr2
+  %6 = call i32 @apply(i32 %5, i32 12, i32 4)
+  %7 = load i32, i32* %total.addr1
+  %8 = add i32 %7, %6
+  store i32 %8, i32* %total.addr1
+  br label %L11
+L11:
+  %9 = load i32, i32* %op.addr2
+  %10 = add i32 %9, 1
+  store i32 %10, i32* %op.addr2
+  br label %L9
+L12:
+  %11 = load i32, i32* %total.addr1
+  ret i32 %11
+}
+```
+
+</details>
+
+### Pointers and arrays (`public/examples/pointers.c`)
+
+Swaps two values through pointers, passes an array to a function as a pointer, and walks it with `p++` to return a pointer to the largest element. `top - scores` is the number of elements between two pointers. The compiled program exits with status 73.
+
+```c
+// Pointers: swapping through out-parameters, walking an array with a
+// pointer, and returning a pointer into it. The program exits with 73.
+
+void swap(int *a, int *b) {
+    int t = *a;
+    *a = *b;
+    *b = t;
+}
+
+// An array argument arrives as a pointer to its first element
+int *largest(int *values, int n) {
+    int *best = values;
+    for (int *p = values + 1; p < values + n; p++) {
+        if (*p > *best) {
+            best = p;
+        }
+    }
+    return best;
+}
+
+int main() {
+    int scores[5];
+    scores[0] = 12;
+    scores[1] = 40;
+    scores[2] = 7;
+    scores[3] = 31;
+    scores[4] = 3;
+
+    int *top = largest(scores, 5);
+    int position = top - scores;   // elements between the two pointers: 1
+
+    swap(&scores[0], top);         // move the largest score to the front
+    *top += 1;                     // the old first score, 12, becomes 13
+
+    return scores[0] + scores[1] + position * 20; // 40 + 13 + 20 = 73
+}
+```
+
+**Three-address code:**
+
+```text
+func swap:
+begin_func
+t1 = *a
+t = t1
+t2 = *b
+*a = t2
+*b = t
+end_func
+
+func largest:
+begin_func
+best = values
+t3 = values + 1
+p = t3
+L1:
+t4 = values + n
+t5 = p < t4
+if_false t5 goto L3
+t6 = *p
+t7 = *best
+t8 = t6 > t7
+if_false t8 goto L4
+best = p
+goto L5
+L4:
+L5:
+L2:
+t9 = p
+p = p + 1
+goto L1
+L3:
+return best
+end_func
+
+func main:
+begin_func
+alloc_array scores, 5
+scores[0] = 12
+scores[1] = 40
+scores[2] = 7
+scores[3] = 31
+scores[4] = 3
+param scores
+param 5
+t10 = call largest, 2
+top = t10
+t11 = top - scores
+position = t11
+t12 = &scores[0]
+param t12
+param top
+t13 = call swap, 2
+t14 = *top
+t15 = t14 + 1
+*top = t15
+t16 = scores[0]
+t17 = scores[1]
+t18 = t16 + t17
+t19 = position * 20
+t20 = t18 + t19
+return t20
+end_func
+```
+
+<details>
+<summary>LLVM IR</summary>
+
+```llvm
+; LLVM IR Generated by Custom Compiler
+declare i32 @printf(i8*, ...)
+
+define void @swap(i32* %a_arg, i32* %b_arg) {
+entry:
+  %a.addr1 = alloca i32*
+  %b.addr2 = alloca i32*
+  %t.addr3 = alloca i32
+  store i32* %a_arg, i32** %a.addr1
+  store i32* %b_arg, i32** %b.addr2
+  %1 = load i32*, i32** %a.addr1
+  %2 = load i32, i32* %1
+  store i32 %2, i32* %t.addr3
+  %3 = load i32*, i32** %a.addr1
+  %4 = load i32*, i32** %b.addr2
+  %5 = load i32, i32* %4
+  store i32 %5, i32* %3
+  %6 = load i32*, i32** %b.addr2
+  %7 = load i32, i32* %t.addr3
+  store i32 %7, i32* %6
+  ret void
+}
+
+define i32* @largest(i32* %values_arg, i32 %n_arg) {
+entry:
+  %values.addr1 = alloca i32*
+  %n.addr2 = alloca i32
+  %best.addr3 = alloca i32*
+  %p.addr4 = alloca i32*
+  store i32* %values_arg, i32** %values.addr1
+  store i32 %n_arg, i32* %n.addr2
+  %1 = load i32*, i32** %values.addr1
+  store i32* %1, i32** %best.addr3
+  %2 = load i32*, i32** %values.addr1
+  %3 = getelementptr i32, i32* %2, i32 1
+  store i32* %3, i32** %p.addr4
+  br label %L1
+L1:
+  %4 = load i32*, i32** %p.addr4
+  %5 = load i32*, i32** %values.addr1
+  %6 = load i32, i32* %n.addr2
+  %7 = getelementptr i32, i32* %5, i32 %6
+  %8 = icmp ult i32* %4, %7
+  %9 = zext i1 %8 to i32
+  %10 = icmp ne i32 %9, 0
+  br i1 %10, label %L2, label %L4
+L2:
+  %11 = load i32*, i32** %p.addr4
+  %12 = load i32, i32* %11
+  %13 = load i32*, i32** %best.addr3
+  %14 = load i32, i32* %13
+  %15 = icmp sgt i32 %12, %14
+  %16 = zext i1 %15 to i32
+  %17 = icmp ne i32 %16, 0
+  br i1 %17, label %L5, label %L7
+L5:
+  %18 = load i32*, i32** %p.addr4
+  store i32* %18, i32** %best.addr3
+  br label %L7
+L7:
+  br label %L3
+L3:
+  %19 = load i32*, i32** %p.addr4
+  %20 = getelementptr i32, i32* %19, i32 1
+  store i32* %20, i32** %p.addr4
+  br label %L1
+L4:
+  %21 = load i32*, i32** %best.addr3
+  ret i32* %21
+}
+
+define i32 @main() {
+entry:
+  %scores.addr1 = alloca [5 x i32]
+  %top.addr2 = alloca i32*
+  %position.addr3 = alloca i32
+  %1 = getelementptr [5 x i32], [5 x i32]* %scores.addr1, i32 0, i32 0
+  store i32 12, i32* %1
+  %2 = getelementptr [5 x i32], [5 x i32]* %scores.addr1, i32 0, i32 1
+  store i32 40, i32* %2
+  %3 = getelementptr [5 x i32], [5 x i32]* %scores.addr1, i32 0, i32 2
+  store i32 7, i32* %3
+  %4 = getelementptr [5 x i32], [5 x i32]* %scores.addr1, i32 0, i32 3
+  store i32 31, i32* %4
+  %5 = getelementptr [5 x i32], [5 x i32]* %scores.addr1, i32 0, i32 4
+  store i32 3, i32* %5
+  %6 = getelementptr [5 x i32], [5 x i32]* %scores.addr1, i32 0, i32 0
+  %7 = call i32* @largest(i32* %6, i32 5)
+  store i32* %7, i32** %top.addr2
+  %8 = load i32*, i32** %top.addr2
+  %9 = getelementptr [5 x i32], [5 x i32]* %scores.addr1, i32 0, i32 0
+  %10 = ptrtoint i32* %8 to i64
+  %11 = ptrtoint i32* %9 to i64
+  %12 = sub i64 %10, %11
+  %13 = sdiv exact i64 %12, 4
+  %14 = trunc i64 %13 to i32
+  store i32 %14, i32* %position.addr3
+  %15 = getelementptr [5 x i32], [5 x i32]* %scores.addr1, i32 0, i32 0
+  %16 = load i32*, i32** %top.addr2
+  call void @swap(i32* %15, i32* %16)
+  %17 = load i32*, i32** %top.addr2
+  %18 = load i32, i32* %17
+  %19 = add i32 %18, 1
+  store i32 %19, i32* %17
+  %20 = getelementptr [5 x i32], [5 x i32]* %scores.addr1, i32 0, i32 0
+  %21 = load i32, i32* %20
+  %22 = getelementptr [5 x i32], [5 x i32]* %scores.addr1, i32 0, i32 1
+  %23 = load i32, i32* %22
+  %24 = add i32 %21, %23
+  %25 = load i32, i32* %position.addr3
+  %26 = mul i32 %25, 20
+  %27 = add i32 %24, %26
+  ret i32 %27
+}
+```
+
+</details>
+
+### Structs, an initializer list and a linked chain (`public/examples/structs.c`)
+
+Fills an array of structs from one nested initializer list, links the items through `next` pointers, passes structs by value and by pointer, and walks the chain with `->`. The compiled program exits with status 112.
+
+```c
+// Structs: a small inventory of items kept in an array, a pointer to the
+// most valuable one, and a linked chain built through next pointers.
+// The program exits with status 112.
+
+struct Item {
+    int price;
+    int quantity;
+    struct Item *next;
+};
+
+int value(struct Item item) {
+    return item.price * item.quantity;
+}
+
+struct Item *most_valuable(struct Item *items, int n) {
+    struct Item *best = items;
+    for (int i = 1; i < n; i++) {
+        if (value(items[i]) > value(*best)) {
+            best = &items[i];
+        }
+    }
+    return best;
+}
+
+int main() {
+    // price, quantity; each next pointer starts out null
+    struct Item stock[] = {{4, 10}, {25, 2}, {9, 7}};
+
+    // Chain the items together: 0 -> 1 -> 2
+    for (int i = 0; i < 2; i++) {
+        stock[i].next = &stock[i + 1];
+    }
+    stock[2].next = 0;
+
+    struct Item *best = most_valuable(stock, 3);
+    best->quantity++;          // restock the best seller: 9 x 8 = 72
+
+    int total = 0;
+    for (struct Item *it = &stock[0]; it != 0; it = it->next) {
+        total += it->quantity;
+    }
+    return value(*best) + total + (best - stock) * 10; // 72 + 20 + 20 = 112
+}
+```
+
+**Three-address code:**
+
+```text
+struct Item { int price, int quantity, struct Item* next }
+func value:
+begin_func
+t1 = item.price
+t2 = item.quantity
+t3 = t1 * t2
+return t3
+end_func
+
+func most_valuable:
+begin_func
+best = items
+i = 1
+L1:
+t4 = i < n
+if_false t4 goto L3
+t5 = items[i]
+param t5
+t6 = call value, 1
+t7 = *best
+param t7
+t8 = call value, 1
+t9 = t6 > t8
+if_false t9 goto L4
+t10 = &items[i]
+best = t10
+goto L5
+L4:
+L5:
+L2:
+t11 = i
+i = i + 1
+goto L1
+L3:
+return best
+end_func
+
+func main:
+begin_func
+alloc_array stock, 3
+clear stock
+stock[0].price = 4
+stock[0].quantity = 10
+stock[1].price = 25
+stock[1].quantity = 2
+stock[2].price = 9
+stock[2].quantity = 7
+i = 0
+L6:
+t12 = i < 2
+if_false t12 goto L8
+t14 = i + 1
+t13 = &stock[t14]
+stock[i].next = t13
+L7:
+t15 = i
+i = i + 1
+goto L6
+L8:
+stock[2].next = 0
+param stock
+param 3
+t16 = call most_valuable, 2
+best = t16
+t17 = best->quantity
+best->quantity = t17 + 1
+total = 0
+t18 = &stock[0]
+it = t18
+L9:
+t19 = it != 0
+if_false t19 goto L11
+t20 = it->quantity
+t21 = total + t20
+total = t21
+L10:
+t22 = it->next
+it = t22
+goto L9
+L11:
+t23 = *best
+param t23
+t24 = call value, 1
+t25 = t24 + total
+t26 = best - stock
+t27 = t26 * 10
+t28 = t25 + t27
+return t28
+end_func
+```
+
+<details>
+<summary>LLVM IR</summary>
+
+```llvm
+; LLVM IR Generated by Custom Compiler
+declare i32 @printf(i8*, ...)
+%struct.Item = type { i32, i32, %struct.Item* }
+
+define i32 @value(%struct.Item %item_arg) {
+entry:
+  %item.addr1 = alloca %struct.Item
+  store %struct.Item %item_arg, %struct.Item* %item.addr1
+  %1 = getelementptr %struct.Item, %struct.Item* %item.addr1, i32 0, i32 0
+  %2 = load i32, i32* %1
+  %3 = getelementptr %struct.Item, %struct.Item* %item.addr1, i32 0, i32 1
+  %4 = load i32, i32* %3
+  %5 = mul i32 %2, %4
+  ret i32 %5
+}
+
+define %struct.Item* @most_valuable(%struct.Item* %items_arg, i32 %n_arg) {
+entry:
+  %items.addr1 = alloca %struct.Item*
+  %n.addr2 = alloca i32
+  %best.addr3 = alloca %struct.Item*
+  %i.addr4 = alloca i32
+  store %struct.Item* %items_arg, %struct.Item** %items.addr1
+  store i32 %n_arg, i32* %n.addr2
+  %1 = load %struct.Item*, %struct.Item** %items.addr1
+  store %struct.Item* %1, %struct.Item** %best.addr3
+  store i32 1, i32* %i.addr4
+  br label %L1
+L1:
+  %2 = load i32, i32* %i.addr4
+  %3 = load i32, i32* %n.addr2
+  %4 = icmp slt i32 %2, %3
+  %5 = zext i1 %4 to i32
+  %6 = icmp ne i32 %5, 0
+  br i1 %6, label %L2, label %L4
+L2:
+  %7 = load i32, i32* %i.addr4
+  %8 = load %struct.Item*, %struct.Item** %items.addr1
+  %9 = getelementptr %struct.Item, %struct.Item* %8, i32 %7
+  %10 = load %struct.Item, %struct.Item* %9
+  %11 = call i32 @value(%struct.Item %10)
+  %12 = load %struct.Item*, %struct.Item** %best.addr3
+  %13 = load %struct.Item, %struct.Item* %12
+  %14 = call i32 @value(%struct.Item %13)
+  %15 = icmp sgt i32 %11, %14
+  %16 = zext i1 %15 to i32
+  %17 = icmp ne i32 %16, 0
+  br i1 %17, label %L5, label %L7
+L5:
+  %18 = load i32, i32* %i.addr4
+  %19 = load %struct.Item*, %struct.Item** %items.addr1
+  %20 = getelementptr %struct.Item, %struct.Item* %19, i32 %18
+  store %struct.Item* %20, %struct.Item** %best.addr3
+  br label %L7
+L7:
+  br label %L3
+L3:
+  %21 = load i32, i32* %i.addr4
+  %22 = add i32 %21, 1
+  store i32 %22, i32* %i.addr4
+  br label %L1
+L4:
+  %23 = load %struct.Item*, %struct.Item** %best.addr3
+  ret %struct.Item* %23
+}
+
+define i32 @main() {
+entry:
+  %stock.addr1 = alloca [3 x %struct.Item]
+  %i.addr2 = alloca i32
+  %best.addr3 = alloca %struct.Item*
+  %total.addr4 = alloca i32
+  %it.addr5 = alloca %struct.Item*
+  store [3 x %struct.Item] zeroinitializer, [3 x %struct.Item]* %stock.addr1
+  %1 = getelementptr [3 x %struct.Item], [3 x %struct.Item]* %stock.addr1, i32 0, i32 0
+  %2 = getelementptr %struct.Item, %struct.Item* %1, i32 0, i32 0
+  store i32 4, i32* %2
+  %3 = getelementptr %struct.Item, %struct.Item* %1, i32 0, i32 1
+  store i32 10, i32* %3
+  %4 = getelementptr [3 x %struct.Item], [3 x %struct.Item]* %stock.addr1, i32 0, i32 1
+  %5 = getelementptr %struct.Item, %struct.Item* %4, i32 0, i32 0
+  store i32 25, i32* %5
+  %6 = getelementptr %struct.Item, %struct.Item* %4, i32 0, i32 1
+  store i32 2, i32* %6
+  %7 = getelementptr [3 x %struct.Item], [3 x %struct.Item]* %stock.addr1, i32 0, i32 2
+  %8 = getelementptr %struct.Item, %struct.Item* %7, i32 0, i32 0
+  store i32 9, i32* %8
+  %9 = getelementptr %struct.Item, %struct.Item* %7, i32 0, i32 1
+  store i32 7, i32* %9
+  store i32 0, i32* %i.addr2
+  br label %L8
+L8:
+  %10 = load i32, i32* %i.addr2
+  %11 = icmp slt i32 %10, 2
+  %12 = zext i1 %11 to i32
+  %13 = icmp ne i32 %12, 0
+  br i1 %13, label %L9, label %L11
+L9:
+  %14 = load i32, i32* %i.addr2
+  %15 = getelementptr [3 x %struct.Item], [3 x %struct.Item]* %stock.addr1, i32 0, i32 %14
+  %16 = getelementptr %struct.Item, %struct.Item* %15, i32 0, i32 2
+  %17 = load i32, i32* %i.addr2
+  %18 = add i32 %17, 1
+  %19 = getelementptr [3 x %struct.Item], [3 x %struct.Item]* %stock.addr1, i32 0, i32 %18
+  store %struct.Item* %19, %struct.Item** %16
+  br label %L10
+L10:
+  %20 = load i32, i32* %i.addr2
+  %21 = add i32 %20, 1
+  store i32 %21, i32* %i.addr2
+  br label %L8
+L11:
+  %22 = getelementptr [3 x %struct.Item], [3 x %struct.Item]* %stock.addr1, i32 0, i32 2
+  %23 = getelementptr %struct.Item, %struct.Item* %22, i32 0, i32 2
+  store %struct.Item* null, %struct.Item** %23
+  %24 = getelementptr [3 x %struct.Item], [3 x %struct.Item]* %stock.addr1, i32 0, i32 0
+  %25 = call %struct.Item* @most_valuable(%struct.Item* %24, i32 3)
+  store %struct.Item* %25, %struct.Item** %best.addr3
+  %26 = load %struct.Item*, %struct.Item** %best.addr3
+  %27 = getelementptr %struct.Item, %struct.Item* %26, i32 0, i32 1
+  %28 = load i32, i32* %27
+  %29 = add i32 %28, 1
+  store i32 %29, i32* %27
+  store i32 0, i32* %total.addr4
+  %30 = getelementptr [3 x %struct.Item], [3 x %struct.Item]* %stock.addr1, i32 0, i32 0
+  store %struct.Item* %30, %struct.Item** %it.addr5
+  br label %L12
+L12:
+  %31 = load %struct.Item*, %struct.Item** %it.addr5
+  %32 = icmp ne %struct.Item* %31, null
+  %33 = zext i1 %32 to i32
+  %34 = icmp ne i32 %33, 0
+  br i1 %34, label %L13, label %L15
+L13:
+  %35 = load %struct.Item*, %struct.Item** %it.addr5
+  %36 = getelementptr %struct.Item, %struct.Item* %35, i32 0, i32 1
+  %37 = load i32, i32* %36
+  %38 = load i32, i32* %total.addr4
+  %39 = add i32 %38, %37
+  store i32 %39, i32* %total.addr4
+  br label %L14
+L14:
+  %40 = load %struct.Item*, %struct.Item** %it.addr5
+  %41 = getelementptr %struct.Item, %struct.Item* %40, i32 0, i32 2
+  %42 = load %struct.Item*, %struct.Item** %41
+  store %struct.Item* %42, %struct.Item** %it.addr5
+  br label %L12
+L15:
+  %43 = load %struct.Item*, %struct.Item** %best.addr3
+  %44 = load %struct.Item, %struct.Item* %43
+  %45 = call i32 @value(%struct.Item %44)
+  %46 = load i32, i32* %total.addr4
+  %47 = add i32 %45, %46
+  %48 = load %struct.Item*, %struct.Item** %best.addr3
+  %49 = getelementptr [3 x %struct.Item], [3 x %struct.Item]* %stock.addr1, i32 0, i32 0
+  %50 = ptrtoint %struct.Item* %48 to i64
+  %51 = ptrtoint %struct.Item* %49 to i64
+  %52 = sub i64 %50, %51
+  %53 = sdiv exact i64 %52, ptrtoint (%struct.Item* getelementptr (%struct.Item, %struct.Item* null, i32 1) to i64)
+  %54 = trunc i64 %53 to i32
+  %55 = mul i32 %54, 10
+  %56 = add i32 %47, %55
+  ret i32 %56
+}
+```
+
+</details>
