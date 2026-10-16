@@ -95,6 +95,20 @@ class UnaryOp(ASTNode):
         self.op = op
         self.expr = expr
 
+class DerefAssignStmt(ASTNode):
+    def __init__(self, pointer_expr, expr, op=None):
+        self.pointer_expr = pointer_expr # *pointer_expr = expr
+        self.expr = expr
+        self.op = op # as for AssignStmt
+
+class Deref(ASTNode):
+    def __init__(self, expr):
+        self.expr = expr # *expr
+
+class AddressOf(ASTNode):
+    def __init__(self, expr):
+        self.expr = expr # &expr: a Var, ArrayAccess or Deref
+
 class Var(ASTNode):
     def __init__(self, name):
         self.name = name

@@ -14,7 +14,8 @@ This document presents the design and implementation of a modular compiler for a
 
 ### Features Supported
 
-- **Data Types**: `int`, `float`, `double`, and `void` (function return type only), with implicit conversions between numeric types on assignment, arguments, returns and mixed arithmetic
+- **Data Types**: `int`, `float`, `double`, pointers to them at any depth (`int *`, `double **`), and `void` (function return type only), with implicit conversions between numeric types on assignment, arguments, returns and mixed arithmetic
+- **Pointers**: `&x` and `&a[i]`, `*p` for reading and writing, `p[i]`, pointer arithmetic (`p + n`, `p - n`, `p++`, and `p - q` for the number of elements between two pointers), comparisons, null checks against `0`, arrays that decay to pointers, and `int a[]` parameters
 - **Expressions**: Arithmetic (`+`, `-`, `*`, `/`, `%`), Relational (`==`, `!=`, `<`, `>`, `<=`, `>=`), Logical (`&&`, `||`, `!`) with short-circuit evaluation, prefix and postfix `++` / `--`, and assignment with `=`, `+=`, `-=`, `*=`, `/=` and `%=`
 - **Control Flow**: `if-else`, `switch` (with fall-through and `default`), `while`, `do-while`, `for` loops (with a declaration in the init clause, and any clause may be empty), `break` and `continue`
 - **Functions**: Parameter passing, return statements, recursion, `void` functions and `f(void)` parameter lists
@@ -28,8 +29,9 @@ This document presents the design and implementation of a modular compiler for a
 Program   -> Decl*
 Decl      -> Type ID ( '(' Params ')' Block | '[' NUMBER ']' ';' | [ '=' Expr ] ';' )
            | 'void' ID '(' Params ')' Block
-Type      -> 'int' | 'float' | 'double'
-Params    -> 'void' | [ Type ID { ',' Type ID } ]
+Type      -> ( 'int' | 'float' | 'double' ) { '*' }
+Params    -> 'void' | [ Param { ',' Param } ]
+Param     -> Type ID [ '[' [ NUMBER ] ']' ]
 Block     -> '{' ( LocalDecl | Stmt )* '}'
 LocalDecl -> Type ID ( '[' NUMBER ']' | [ '=' Expr ] ) ';'
 Stmt      -> IfStmt | SwitchStmt | WhileStmt | DoWhileStmt | ForStmt | ReturnStmt | 'break' ';' | 'continue' ';' | ExprStmt | Block
@@ -40,7 +42,8 @@ DoWhileStmt -> 'do' Stmt 'while' '(' Expr ')' ';'
 ForStmt   -> 'for' '(' ( Type ID [ '=' Expr ] ';' | ExprStmt | ';' ) [ Expr ] ';' [ Assign ] ')' Stmt
 ReturnStmt-> 'return' [ Expr ] ';'
 ExprStmt  -> Assign ';'
-Assign    -> ID AssignOp Assign | ID '[' Expr ']' AssignOp Assign | Expr
+Assign    -> LValue AssignOp Assign | Expr
+LValue    -> ID | ID '[' Expr ']' | '*' Unary
 AssignOp  -> '=' | '+=' | '-=' | '*=' | '/=' | '%='
 Expr      -> LogicalOr
 LogicalOr -> LogicalAnd { '||' LogicalAnd }
@@ -49,7 +52,7 @@ Equality  -> Relational { ( '==' | '!=' ) Relational }
 Relational-> Additive { ( '<' | '>' | '<=' | '>=' ) Additive }
 Additive  -> Term { ( '+' | '-' ) Term }
 Term      -> Unary { ( '*' | '/' | '%' ) Unary }
-Unary     -> ( '-' | '!' ) Unary | ( '++' | '--' ) ID | Primary
+Unary     -> ( '-' | '!' | '*' | '&' ) Unary | ( '++' | '--' ) ID | Primary
 Primary   -> NUMBER | ID [ '++' | '--' ] | ID '(' [ Expr { ',' Expr } ] ')' | ID '[' Expr ']' | '(' Expr ')'
 ```
 
@@ -57,7 +60,7 @@ Primary   -> NUMBER | ID [ '++' | '--' ] | ID '(' [ Expr { ',' Expr } ] ')' | ID
 
 1. **Lexical Analyzer (`lexer.py`)**: Tokenizes the input code using regular expressions to match keywords, numbers, identifiers, and symbols. Comments are skipped while keeping line numbers accurate for error messages.
 2. **Syntax Analyzer (`parser.py`)**: Uses Recursive Descent Parsing to build an Abstract Syntax Tree (AST). It incorporates assignments directly into expressions to support standard C `for` loops.
-3. **Semantic Analyzer (`semantic.py`)**: Traverses the AST with a stack-based Symbol Table to enforce variable scoping, duplicate declarations, array access checks, argument counts, `void` usage and constant global initializers. It also works out the type of every expression (`int`, `float`, `double` or `void`) using C's usual arithmetic conversions, and rejects what C rejects: `%` on floating-point operands, non-integer array indexes, sizes and `switch` values, and arrays used without an index.
+3. **Semantic Analyzer (`semantic.py`)**: Traverses the AST with a stack-based Symbol Table to enforce variable scoping, duplicate declarations, array access checks, argument counts, `void` usage and constant global initializers. It also works out the type of every expression (`int`, `float`, `double`, a pointer type or `void`) using C's usual arithmetic conversions and pointer rules, and rejects what C rejects: `%` on floating-point operands, non-integer array indexes, sizes and `switch` values, dereferencing a non-pointer, mixing pointers and integers (other than the null constant `0`), and invalid pointer arithmetic such as adding two pointers.
 4. **Optimizer (`optimizer.py`)**: Performs Constant Folding on arithmetic expressions and eliminates dead code (e.g. `if(0)` blocks or `while(0)`). Folding follows C semantics: integer division and remainder truncate toward zero and integer results wrap at 32 bits.
 5. **TAC Generator (`tac.py`)**: A post-order AST traversal to generate flat Three-Address Code with explicit labels and temporaries.
 6. **LLVM Backend (`codegen.py`)**: Traverses the AST to generate standard LLVM Intermediate Representation (`.ll`). Every local variable gets one stack slot (`alloca`) in the function's entry block, accessed through loads and stores; a scope stack resolves shadowed names. `&&` and `||` are lowered to branches joined by a `phi` node so the right operand is only evaluated when needed.
@@ -65,7 +68,9 @@ Primary   -> NUMBER | ID [ '++' | '--' ] | ID '(' [ Expr { ',' Expr } ] ')' | ID
 ## 4. Limitations
 
 - Single-dimensional arrays only, with no array initializers.
-- Pointers, structs, `char` and string literals are not supported, so there is no I/O; programs report results through their exit code.
+- Structs, `char` and string literals are not supported, so there is no I/O; programs report results through their exit code.
+- Pointers have no `void *`, casts, function pointers or `&array` (the array name already points to its first element), and `++`/`--` only apply to plain variables, so `(*p)++` is written `*p += 1`.
+- Assigning between different pointer types is an error. Clang only warns about it, but GCC 14 and later reject it too.
 - Conversions between `int`, `float` and `double` happen implicitly as in C, without warnings for narrowing (for example, assigning a `double` to an `int`).
 - Zero-length arrays, a GNU extension that clang accepts, are rejected as in ISO C.
 - Floating-point literals need digits before the decimal point (`0.5`, not `.5`) and cannot use exponents (`1e5`).

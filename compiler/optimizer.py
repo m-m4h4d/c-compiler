@@ -186,6 +186,20 @@ class Optimizer:
                 return Number(1 if not node.expr.value else 0, 'int')
         return node
 
+    def visit_DerefAssignStmt(self, node):
+        node.pointer_expr = self.visit(node.pointer_expr)
+        node.expr = self.visit(node.expr)
+        return node
+
+    def visit_Deref(self, node):
+        node.expr = self.visit(node.expr)
+        return node
+
+    def visit_AddressOf(self, node):
+        if isinstance(node.expr, ArrayAccess):
+            node.expr.index_expr = self.visit(node.expr.index_expr)
+        return node # the operand itself must stay a variable or element, never a folded value
+
     def visit_Var(self, node):
         return node
 

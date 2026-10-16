@@ -1,0 +1,5 @@
+int main() {
+    int x = 1;
+    *x = 2; // error
+    return 0;
+}

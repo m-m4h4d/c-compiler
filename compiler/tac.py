@@ -179,6 +179,35 @@ class TACGenerator:
             val = temp
         self.emit(f"{node.name}[{idx_val}] = {val}")
 
+    def visit_DerefAssignStmt(self, node):
+        ptr = self.visit(node.pointer_expr)
+        val = self.visit(node.expr)
+        if node.op:
+            old = self.new_temp()
+            self.emit(f"{old} = *{ptr}")
+            temp = self.new_temp()
+            self.emit(f"{temp} = {old} {node.op} {val}")
+            val = temp
+        self.emit(f"*{ptr} = {val}")
+
+    def visit_Deref(self, node):
+        ptr = self.visit(node.expr)
+        temp = self.new_temp()
+        self.emit(f"{temp} = *{ptr}")
+        return temp
+
+    def visit_AddressOf(self, node):
+        target = node.expr
+        temp = self.new_temp()
+        if isinstance(target, Var):
+            self.emit(f"{temp} = &{target.name}")
+        elif isinstance(target, ArrayAccess):
+            idx = self.visit(target.index_expr)
+            self.emit(f"{temp} = &{target.name}[{idx}]")
+        else:
+            return self.visit(target.expr) # &*p is p
+        return temp
+
     def visit_BinOp(self, node):
         left_val = self.visit(node.left)
         right_val = self.visit(node.right)

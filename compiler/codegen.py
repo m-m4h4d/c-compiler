@@ -5,6 +5,18 @@ from optimizer import Optimizer, fold_constant
 # Higher rank wins when two operand types meet in an expression
 TYPE_RANK = {'i32': 0, 'float': 1, 'double': 2}
 
+# Pointers use LLVM's typed syntax (i32*, double**), so pointee() is a slice
+def is_pointer(llvm_type):
+    return llvm_type.endswith('*')
+
+def pointee(llvm_type):
+    return llvm_type[:-1]
+
+# Bytes per element, for the distance between two pointers
+SIZE_OF = {'i32': 4, 'float': 4, 'double': 8}
+def size_of(llvm_type):
+    return 8 if is_pointer(llvm_type) else SIZE_OF[llvm_type]
+
 ICMP_OPS = {'==': 'eq', '!=': 'ne', '<': 'slt', '<=': 'sle', '>': 'sgt', '>=': 'sge'}
 FCMP_OPS = {'==': 'oeq', '!=': 'une', '<': 'olt', '<=': 'ole', '>': 'ogt', '>=': 'oge'}
 INT_ARITH = {'+': 'add', '-': 'sub', '*': 'mul', '/': 'sdiv', '%': 'srem'}
@@ -65,13 +77,14 @@ class LLVMGenerator:
         self.terminated = True
 
     def map_type(self, c_type):
-        if c_type == 'int': return 'i32'
-        elif c_type == 'float': return 'float'
-        elif c_type == 'double': return 'double'
-        elif c_type == 'void': return 'void'
-        return 'i32' # default
+        stars = len(c_type) - len(c_type.rstrip('*')) # 'int**' maps to 'i32**'
+        base = c_type[:len(c_type) - stars]
+        llvm_base = {'int': 'i32', 'float': 'float', 'double': 'double', 'void': 'void'}.get(base, 'i32')
+        return llvm_base + '*' * stars
 
     def default_value(self, llvm_type):
+        if is_pointer(llvm_type):
+            return 'null'
         return '0' if llvm_type == 'i32' else '0.0'
 
     def float_constant(self, value, llvm_type):
@@ -99,6 +112,9 @@ class LLVMGenerator:
     def convert(self, val, from_type, to_type):
         if from_type == to_type:
             return val
+        if is_pointer(to_type):
+            # Semantic analysis only lets the integer constant 0 reach a pointer
+            return 'null'
         res = self.new_reg()
         if from_type == 'i32':
             self.emit_inst(f"{res} = sitofp i32 {val} to {to_type}")
@@ -112,7 +128,9 @@ class LLVMGenerator:
 
     def to_i1(self, val, val_type):
         res = self.new_reg()
-        if val_type == 'i32':
+        if is_pointer(val_type):
+            self.emit_inst(f"{res} = icmp ne {val_type} {val}, null")
+        elif val_type == 'i32':
             self.emit_inst(f"{res} = icmp ne i32 {val}, 0")
         else:
             self.emit_inst(f"{res} = fcmp une {val_type} {val}, 0.0")
@@ -162,7 +180,9 @@ class LLVMGenerator:
             folded = Optimizer(None).visit(node.init_expr)
             if not isinstance(folded, Number):
                 raise ValueError(f"Codegen: initializer of global '{node.name}' did not fold to a constant")
-            if llvm_type == 'i32':
+            if is_pointer(llvm_type):
+                init = 'null' # the only constant a pointer can start from
+            elif llvm_type == 'i32':
                 init = str(int(folded.value)) # C converts by truncating toward zero
             else:
                 init = self.float_constant(float(folded.value), llvm_type)
@@ -238,11 +258,26 @@ class LLVMGenerator:
         ptr = self.new_slot(node.name, array_type)
         self.declare(node.name, {'ptr': ptr, 'type': llvm_type, 'array_type': array_type})
 
+    def element_type(self, var_info):
+        # name[i] reads an array's element type, or what a pointer points to
+        return var_info['type'] if 'array_type' in var_info else pointee(var_info['type'])
+
     def element_ptr(self, var_info, idx_val):
-        ptr = self.new_reg()
-        array_type = var_info['array_type']
-        self.emit_inst(f"{ptr} = getelementptr {array_type}, {array_type}* {var_info['ptr']}, i32 0, i32 {idx_val}")
-        return ptr
+        if 'array_type' in var_info:
+            ptr = self.new_reg()
+            array_type = var_info['array_type']
+            self.emit_inst(f"{ptr} = getelementptr {array_type}, {array_type}* {var_info['ptr']}, i32 0, i32 {idx_val}")
+            return ptr
+        # Indexing a pointer variable: load the pointer, then step from it.
+        # Registers are numbered in emission order, so the load's comes first.
+        base = self.new_reg()
+        self.emit_inst(f"{base} = load {var_info['type']}, {var_info['type']}* {var_info['ptr']}")
+        return self.pointer_offset(base, var_info['type'], idx_val)
+
+    def pointer_offset(self, ptr, ptr_type, offset):
+        res = self.new_reg()
+        self.emit_inst(f"{res} = getelementptr {pointee(ptr_type)}, {ptr_type} {ptr}, i32 {offset}")
+        return res
 
     def visit_AssignStmt(self, node):
         val, val_type = self.visit(node.expr)
@@ -256,7 +291,12 @@ class LLVMGenerator:
         var_info = self.lookup(node.name)
         # The element's address is computed once, even for a compound assignment
         ptr = self.element_ptr(var_info, idx_val)
-        return self.store(ptr, var_info['type'], val, val_type, node.op)
+        return self.store(ptr, self.element_type(var_info), val, val_type, node.op)
+
+    def visit_DerefAssignStmt(self, node):
+        ptr, ptr_type = self.visit(node.pointer_expr)
+        val, val_type = self.visit(node.expr)
+        return self.store(ptr, pointee(ptr_type), val, val_type, node.op)
 
     def store(self, ptr, llvm_type, val, val_type, op=None):
         if op:
@@ -440,6 +480,8 @@ class LLVMGenerator:
         return self.binary_op(node.op, left_val, left_type, right_val, right_type)
 
     def binary_op(self, op, left_val, left_type, right_val, right_type):
+        if is_pointer(left_type) or is_pointer(right_type):
+            return self.pointer_op(op, left_val, left_type, right_val, right_type)
         op_type = max(left_type, right_type, key=TYPE_RANK.get)
         left_val = self.convert(left_val, left_type, op_type)
         right_val = self.convert(right_val, right_type, op_type)
@@ -456,6 +498,58 @@ class LLVMGenerator:
         arith = INT_ARITH if op_type == 'i32' else FLOAT_ARITH
         self.emit_inst(f"{res} = {arith[op]} {op_type} {left_val}, {right_val}")
         return res, op_type
+
+    def pointer_op(self, op, left_val, left_type, right_val, right_type):
+        # Semantic analysis has already allowed only C's pointer operations
+        if op in ICMP_OPS:
+            ptr_type = left_type if is_pointer(left_type) else right_type
+            if not is_pointer(left_type):
+                left_val = 'null' # comparing with the null constant 0
+            if not is_pointer(right_type):
+                right_val = 'null'
+            # Pointers compare as unsigned addresses
+            pred = {'==': 'eq', '!=': 'ne', '<': 'ult', '<=': 'ule', '>': 'ugt', '>=': 'uge'}[op]
+            cmp = self.new_reg()
+            self.emit_inst(f"{cmp} = icmp {pred} {ptr_type} {left_val}, {right_val}")
+            return self.i1_to_i32(cmp), 'i32'
+
+        if op == '-' and is_pointer(left_type) and is_pointer(right_type):
+            # The number of elements between two pointers
+            left_int, right_int, bytes_apart, count = (self.new_reg() for _ in range(4))
+            self.emit_inst(f"{left_int} = ptrtoint {left_type} {left_val} to i64")
+            self.emit_inst(f"{right_int} = ptrtoint {right_type} {right_val} to i64")
+            self.emit_inst(f"{bytes_apart} = sub i64 {left_int}, {right_int}")
+            self.emit_inst(f"{count} = sdiv exact i64 {bytes_apart}, {size_of(pointee(left_type))}")
+            res = self.new_reg()
+            self.emit_inst(f"{res} = trunc i64 {count} to i32")
+            return res, 'i32'
+
+        # pointer + int, int + pointer, pointer - int: step by whole elements
+        if is_pointer(right_type):
+            left_val, left_type, right_val, right_type = right_val, right_type, left_val, left_type
+        offset = right_val
+        if op == '-':
+            offset = self.new_reg()
+            self.emit_inst(f"{offset} = sub i32 0, {right_val}")
+        return self.pointer_offset(left_val, left_type, offset), left_type
+
+    def visit_Deref(self, node):
+        ptr, ptr_type = self.visit(node.expr)
+        res = self.new_reg()
+        self.emit_inst(f"{res} = load {pointee(ptr_type)}, {ptr_type} {ptr}")
+        return res, pointee(ptr_type)
+
+    def visit_AddressOf(self, node):
+        target = node.expr
+        if isinstance(target, Var):
+            var_info = self.lookup(target.name)
+            return var_info['ptr'], var_info['type'] + '*'
+        if isinstance(target, ArrayAccess):
+            idx_val, idx_type = self.visit(target.index_expr)
+            idx_val = self.convert(idx_val, idx_type, 'i32')
+            var_info = self.lookup(target.name)
+            return self.element_ptr(var_info, idx_val), self.element_type(var_info) + '*'
+        return self.visit(target.expr) # &*p is p
 
     def visit_UnaryOp(self, node):
         val, val_type = self.visit(node.expr)
@@ -478,6 +572,10 @@ class LLVMGenerator:
         llvm_type = var_info['type']
         old = self.new_reg()
         self.emit_inst(f"{old} = load {llvm_type}, {llvm_type}* {var_info['ptr']}")
+        if is_pointer(llvm_type):
+            new = self.pointer_offset(old, llvm_type, 1 if node.op == '++' else -1)
+            self.emit_inst(f"store {llvm_type} {new}, {llvm_type}* {var_info['ptr']}")
+            return (new if node.prefix else old), llvm_type
         new = self.new_reg()
         if llvm_type == 'i32':
             arith = 'add' if node.op == '++' else 'sub'
@@ -490,6 +588,9 @@ class LLVMGenerator:
 
     def visit_Var(self, node):
         var_info = self.lookup(node.name)
+        if 'array_type' in var_info:
+            # The array decays to a pointer to its first element
+            return self.element_ptr(var_info, 0), var_info['type'] + '*'
         res = self.new_reg()
         self.emit_inst(f"{res} = load {var_info['type']}, {var_info['type']}* {var_info['ptr']}")
         return res, var_info['type']
@@ -499,9 +600,10 @@ class LLVMGenerator:
         idx_val = self.convert(idx_val, idx_type, 'i32')
         var_info = self.lookup(node.name)
         ptr = self.element_ptr(var_info, idx_val)
+        element = self.element_type(var_info)
         res = self.new_reg()
-        self.emit_inst(f"{res} = load {var_info['type']}, {var_info['type']}* {ptr}")
-        return res, var_info['type']
+        self.emit_inst(f"{res} = load {element}, {element}* {ptr}")
+        return res, element
 
     def visit_Number(self, node):
         if node.val_type == 'float':

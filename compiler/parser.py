@@ -35,12 +35,26 @@ class Parser:
             declarations.append(self.parse_declaration())
         return Program(declarations)
 
+    def parse_type(self, allow_void=False):
+        """A base type followed by any number of '*': 'int', 'double*', 'int**'."""
+        tok = self.current_token
+        allowed = ('INT', 'FLOAT', 'DOUBLE', 'VOID') if allow_void else ('INT', 'FLOAT', 'DOUBLE')
+        if tok.type not in allowed:
+            raise ParseError(f"Expected a type at line {tok.line}")
+        self.advance()
+        stars = 0
+        while self.current_token.type == 'MUL':
+            self.advance()
+            stars += 1
+        if tok.type == 'VOID' and stars:
+            raise ParseError(f"void pointers are not supported at line {tok.line}")
+        return tok.value + '*' * stars
+
     def parse_declaration(self):
         # type ID ...
         if self.current_token.type in ('INT', 'FLOAT', 'DOUBLE', 'VOID'):
-            var_type = self.current_token.value
             line = self.current_token.line
-            self.advance()
+            var_type = self.parse_type(allow_void=True)
             name_tok = self.match('ID')
             name = name_tok.value
             
@@ -76,12 +90,18 @@ class Parser:
         return func
 
     def parse_param(self):
-        if self.current_token.type in ('INT', 'FLOAT', 'DOUBLE'):
-            p_type = self.current_token.value
-            self.advance()
-            name = self.match('ID').value
-            return (p_type, name)
-        raise ParseError(f"Expected type in parameter list at line {self.current_token.line}")
+        if self.current_token.type not in ('INT', 'FLOAT', 'DOUBLE'):
+            raise ParseError(f"Expected type in parameter list at line {self.current_token.line}")
+        p_type = self.parse_type()
+        name = self.match('ID').value
+        if self.current_token.type == 'LBRACKET':
+            # As in C, an array parameter `int a[]` or `int a[10]` is a pointer
+            self.match('LBRACKET')
+            if self.current_token.type == 'NUMBER':
+                self.advance()
+            self.match('RBRACKET')
+            p_type += '*'
+        return (p_type, name)
 
     def parse_array_decl(self, var_type, name, line):
         self.match('LBRACKET')
@@ -108,9 +128,13 @@ class Parser:
 
     def parse_block_item(self):
         # A declaration or a statement, as allowed directly inside braces
+        if self.current_token.type == 'VOID':
+            line = self.current_token.line
+            self.parse_type(allow_void=True) # rejects void pointers with a clear message
+            name = self.match('ID').value
+            raise ParseError(f"Variable '{name}' declared void at line {line}")
         if self.current_token.type in ('INT', 'FLOAT', 'DOUBLE'):
-            var_type = self.current_token.value
-            self.advance()
+            var_type = self.parse_type()
             name_tok = self.match('ID')
             if self.current_token.type == 'LBRACKET':
                 return self.parse_array_decl(var_type, name_tok.value, name_tok.line)
@@ -204,8 +228,7 @@ class Parser:
         self.match('LPAREN')
         # Each of the three clauses may be empty
         if self.current_token.type in ('INT', 'FLOAT', 'DOUBLE'):
-            var_type = self.current_token.value
-            self.advance()
+            var_type = self.parse_type()
             name_tok = self.match('ID')
             init = self.parse_var_decl(var_type, name_tok.value, name_tok.line) # Includes SEMI
         elif self.current_token.type == 'SEMI':
@@ -238,32 +261,22 @@ class Parser:
         return expr
 
     def parse_assignment_expr(self):
-        if self.current_token.type == 'ID':
-            # Could be assignment, array assignment, or function call
-            next_tok = self.lexer.tokens[self.pos + 1]
-            if next_tok.type in ('ASSIGN', 'COMPOUND_ASSIGN'):
-                name_tok = self.match('ID')
-                op = self.match_assignment()
-                expr = self.parse_assignment_expr()
-                return self.at(AssignStmt(name_tok.value, expr, op), name_tok.line)
-            elif next_tok.type == 'LBRACKET':
-                # Quick check if it's an assignment to array
-                # Find matching bracket
-                temp_pos = self.pos + 2
-                brackets = 1
-                while temp_pos < len(self.lexer.tokens) and brackets > 0:
-                    if self.lexer.tokens[temp_pos].type == 'LBRACKET': brackets += 1
-                    elif self.lexer.tokens[temp_pos].type == 'RBRACKET': brackets -= 1
-                    temp_pos += 1
-                if temp_pos < len(self.lexer.tokens) and self.lexer.tokens[temp_pos].type in ('ASSIGN', 'COMPOUND_ASSIGN'):
-                    name_tok = self.match('ID')
-                    self.match('LBRACKET')
-                    idx = self.parse_expression()
-                    self.match('RBRACKET')
-                    op = self.match_assignment()
-                    expr = self.parse_assignment_expr()
-                    return self.at(ArrayAssignStmt(name_tok.value, idx, expr, op), name_tok.line)
-        return self.parse_expression()
+        target = self.parse_expression()
+        if self.current_token.type not in ('ASSIGN', 'COMPOUND_ASSIGN'):
+            return target
+        op_tok = self.current_token
+        op = self.match_assignment()
+        expr = self.parse_assignment_expr() # right-associative: a = b = c
+        if isinstance(target, Var):
+            node = AssignStmt(target.name, expr, op)
+        elif isinstance(target, ArrayAccess):
+            node = ArrayAssignStmt(target.name, target.index_expr, expr, op)
+        elif isinstance(target, Deref):
+            node = DerefAssignStmt(target.expr, expr, op)
+        else:
+            raise ParseError(f"The left side of '{op_tok.value}' must be a variable, an array element "
+                             f"or a dereferenced pointer at line {op_tok.line}")
+        return self.at(node, target.line)
 
     def match_assignment(self):
         # Returns None for '=', or the arithmetic operator of a compound assignment
@@ -337,6 +350,12 @@ class Parser:
             self.advance()
             expr = self.parse_unary()
             return self.at(UnaryOp(op_tok.value, expr), op_tok.line)
+        if self.current_token.type == 'MUL':
+            line = self.match('MUL').line
+            return self.at(Deref(self.parse_unary()), line)
+        if self.current_token.type == 'AMP':
+            line = self.match('AMP').line
+            return self.at(AddressOf(self.parse_unary()), line)
         return self.parse_primary()
 
     def parse_incdec_target(self, op):

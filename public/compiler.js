@@ -168,6 +168,9 @@
       case 'AssignStmt': return `AssignStmt ${node.name} ${node.op || ''}=`;
       case 'ArrayAssignStmt': return `ArrayAssignStmt ${node.name}[] ${node.op || ''}=`;
       case 'FuncCall': return `FuncCall ${node.name}`;
+      case 'Deref': return 'Deref *';
+      case 'AddressOf': return 'AddressOf &';
+      case 'DerefAssignStmt': return `DerefAssignStmt *ptr ${node.op || ''}=`;
       case 'SwitchCase': return node.value === null ? 'default' : 'case';
       case 'IncDec': return `IncDec ${node.prefix ? node.op + node.name : node.name + node.op}`;
       default: return node.node;
