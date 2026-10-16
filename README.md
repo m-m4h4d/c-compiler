@@ -16,7 +16,7 @@ This document presents the design and implementation of a modular compiler for a
 
 - **Data Types**: `int`, `float`, `double`, and `void` (function return type only), with implicit conversions between numeric types on assignment, arguments, returns and mixed arithmetic
 - **Expressions**: Arithmetic (`+`, `-`, `*`, `/`, `%`), Relational (`==`, `!=`, `<`, `>`, `<=`, `>=`), Logical (`&&`, `||`, `!`) with short-circuit evaluation, prefix and postfix `++` / `--`
-- **Control Flow**: `if-else`, `while`, `for` loops (with a declaration in the init clause, and any clause may be empty)
+- **Control Flow**: `if-else`, `while`, `for` loops (with a declaration in the init clause, and any clause may be empty), `break` and `continue`
 - **Functions**: Parameter passing, return statements, recursion, `void` functions and `f(void)` parameter lists
 - **Variables**: Block-scoped locals with shadowing, and global variables and arrays with constant initializers
 - **Comments**: `//` line comments and `/* */` block comments
@@ -32,7 +32,7 @@ Type      -> 'int' | 'float' | 'double'
 Params    -> 'void' | [ Type ID { ',' Type ID } ]
 Block     -> '{' ( LocalDecl | Stmt )* '}'
 LocalDecl -> Type ID ( '[' NUMBER ']' | [ '=' Expr ] ) ';'
-Stmt      -> IfStmt | WhileStmt | ForStmt | ReturnStmt | ExprStmt | Block
+Stmt      -> IfStmt | WhileStmt | ForStmt | ReturnStmt | 'break' ';' | 'continue' ';' | ExprStmt | Block
 IfStmt    -> 'if' '(' Expr ')' Stmt [ 'else' Stmt ]
 WhileStmt -> 'while' '(' Expr ')' Stmt
 ForStmt   -> 'for' '(' ( Type ID [ '=' Expr ] ';' | ExprStmt | ';' ) [ Expr ] ';' [ Assign ] ')' Stmt
@@ -63,7 +63,7 @@ Primary   -> NUMBER | ID [ '++' | '--' ] | ID '(' [ Expr { ',' Expr } ] ')' | ID
 
 - Single-dimensional arrays only, with no array initializers.
 - Pointers, structs, `char` and string literals are not supported, so there is no I/O; programs report results through their exit code.
-- No compound assignment (`+=` etc.), `break`, `continue`, `do-while` or `switch`.
+- No compound assignment (`+=` etc.), `do-while` or `switch`.
 - Floating-point literals need digits before the decimal point (`0.5`, not `.5`) and cannot use exponents (`1e5`).
 - No bounds checking on array accesses.
 
@@ -187,13 +187,14 @@ L2:
 j = 0
 L3:
 t5 = j < 5
-if_false t5 goto L4
+if_false t5 goto L5
 t6 = sum + j
 sum = t6
+L4:
 t7 = j + 1
 j = t7
 goto L3
-L4:
+L5:
 return sum
 end_func
 
@@ -274,17 +275,19 @@ L4:
   %11 = icmp slt i32 %10, 5
   %12 = zext i1 %11 to i32
   %13 = icmp ne i32 %12, 0
-  br i1 %13, label %L5, label %L6
+  br i1 %13, label %L5, label %L7
 L5:
   %14 = load i32, i32* %sum.addr1
   %15 = load i32, i32* %j.addr3
   %16 = add i32 %14, %15
   store i32 %16, i32* %sum.addr1
+  br label %L6
+L6:
   %17 = load i32, i32* %j.addr3
   %18 = add i32 %17, 1
   store i32 %18, i32* %j.addr3
   br label %L4
-L6:
+L7:
   %19 = load i32, i32* %sum.addr1
   ret i32 %19
 }

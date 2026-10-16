@@ -53,8 +53,8 @@ class Optimizer:
             opt_stmt = self.visit(stmt)
             if opt_stmt:
                 optimized_statements.append(opt_stmt)
-            # Dead code elimination: stop appending if we hit a return
-            if isinstance(opt_stmt, ReturnStmt):
+            # Dead code elimination: nothing after a return, break or continue can run
+            if isinstance(opt_stmt, (ReturnStmt, BreakStmt, ContinueStmt)):
                 break
         node.statements = optimized_statements
         return node

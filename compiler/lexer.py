@@ -23,7 +23,9 @@ class Lexer:
         'else': 'ELSE',
         'while': 'WHILE',
         'for': 'FOR',
-        'return': 'RETURN'
+        'return': 'RETURN',
+        'break': 'BREAK',
+        'continue': 'CONTINUE'
     }
 
     token_specification = [

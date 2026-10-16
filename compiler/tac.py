@@ -6,6 +6,7 @@ class TACGenerator:
         self.code = []
         self.temp_count = 0
         self.label_count = 0
+        self.loops = [] # (continue label, break label) for each enclosing loop
 
     def new_temp(self):
         self.temp_count += 1
@@ -81,23 +82,37 @@ class TACGenerator:
         self.emit(f"{label_start}:")
         cond_val = self.visit(node.condition)
         self.emit(f"if_false {cond_val} goto {label_end}")
-        self.visit(node.body)
+        self.visit_loop_body(node.body, label_start, label_end)
         self.emit(f"goto {label_start}")
         self.emit(f"{label_end}:")
 
     def visit_ForStmt(self, node):
         self.visit(node.init)
         label_start = self.new_label()
+        label_next = self.new_label()
         label_end = self.new_label()
         
         self.emit(f"{label_start}:")
         if node.condition is not None: # an empty condition loops forever
             cond_val = self.visit(node.condition)
             self.emit(f"if_false {cond_val} goto {label_end}")
-        self.visit(node.body)
+        # continue jumps to the increment, not straight back to the condition
+        self.visit_loop_body(node.body, label_next, label_end)
+        self.emit(f"{label_next}:")
         self.visit(node.increment)
         self.emit(f"goto {label_start}")
         self.emit(f"{label_end}:")
+
+    def visit_loop_body(self, body, continue_label, break_label):
+        self.loops.append((continue_label, break_label))
+        self.visit(body)
+        self.loops.pop()
+
+    def visit_BreakStmt(self, node):
+        self.emit(f"goto {self.loops[-1][1]}")
+
+    def visit_ContinueStmt(self, node):
+        self.emit(f"goto {self.loops[-1][0]}")
 
     def visit_ReturnStmt(self, node):
         if node.expr:

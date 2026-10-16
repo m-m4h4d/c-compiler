@@ -125,6 +125,12 @@ class Parser:
             return self.parse_for()
         elif self.current_token.type == 'RETURN':
             return self.parse_return()
+        elif self.current_token.type in ('BREAK', 'CONTINUE'):
+            tok = self.current_token
+            self.advance()
+            self.match('SEMI')
+            node = BreakStmt() if tok.type == 'BREAK' else ContinueStmt()
+            return self.at(node, tok.line)
         elif self.current_token.type == 'LBRACE':
             return self.parse_block()
         else:
