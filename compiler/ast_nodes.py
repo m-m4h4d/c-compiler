@@ -50,6 +50,12 @@ class ReturnStmt(ASTNode):
     def __init__(self, expr=None):
         self.expr = expr
 
+class BreakStmt(ASTNode):
+    pass
+
+class ContinueStmt(ASTNode):
+    pass
+
 class AssignStmt(ASTNode):
     def __init__(self, name, expr):
         self.name = name

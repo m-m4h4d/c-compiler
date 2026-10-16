@@ -256,6 +256,7 @@ store i32 8, i32* %b.addr1</pre>
           <li><code>int</code>, <code>float</code> and <code>double</code>, with C's implicit conversions</li>
           <li>Functions with parameters, recursion and <code>void</code> return types</li>
           <li><code>if</code> and <code>else</code>, <code>while</code>, and <code>for</code> with a declaration in its first clause</li>
+          <li><code>break</code> and <code>continue</code> in any loop</li>
           <li>Arithmetic, comparison and logical operators, with <code>&amp;&amp;</code> and <code>||</code> evaluated lazily</li>
           <li>Prefix and postfix <code>++</code> and <code>--</code></li>
           <li>One-dimensional arrays, local and global variables, and block scoping</li>
@@ -266,7 +267,7 @@ store i32 8, i32* %b.addr1</pre>
         <h2>What it leaves out</h2>
         <ul>
           <li>Pointers, structs, <code>char</code> and strings, so programs report their result through the exit code</li>
-          <li><code>break</code>, <code>continue</code>, <code>do</code> and <code>switch</code></li>
+          <li><code>do</code> and <code>switch</code></li>
           <li>Compound assignment such as <code>+=</code></li>
           <li>Multi-dimensional arrays and array initializers</li>
           <li>Literals such as <code>.5</code> and <code>1e5</code></li>

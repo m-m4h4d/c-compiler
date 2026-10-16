@@ -47,17 +47,19 @@ L4:
   %11 = icmp slt i32 %10, 5
   %12 = zext i1 %11 to i32
   %13 = icmp ne i32 %12, 0
-  br i1 %13, label %L5, label %L6
+  br i1 %13, label %L5, label %L7
 L5:
   %14 = load i32, i32* %sum.addr1
   %15 = load i32, i32* %j.addr3
   %16 = add i32 %14, %15
   store i32 %16, i32* %sum.addr1
+  br label %L6
+L6:
   %17 = load i32, i32* %j.addr3
   %18 = add i32 %17, 1
   store i32 %18, i32* %j.addr3
   br label %L4
-L6:
+L7:
   %19 = load i32, i32* %sum.addr1
   ret i32 %19
 }

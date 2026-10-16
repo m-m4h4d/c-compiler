@@ -39,6 +39,7 @@ class SemanticAnalyzer:
         self.ast = ast
         self.symtab = SymbolTable()
         self.current_function = None
+        self.loop_depth = 0
 
     def analyze(self):
         self.visit(self.ast)
@@ -108,14 +109,27 @@ class SemanticAnalyzer:
 
     def visit_WhileStmt(self, node):
         self.visit(node.condition)
-        self.visit_statement(node.body)
+        self.visit_loop_body(node.body)
+
+    def visit_loop_body(self, body):
+        self.loop_depth += 1
+        self.visit_statement(body)
+        self.loop_depth -= 1
+
+    def visit_BreakStmt(self, node):
+        if self.loop_depth == 0:
+            raise SemanticError("'break' outside of a loop", node.line)
+
+    def visit_ContinueStmt(self, node):
+        if self.loop_depth == 0:
+            raise SemanticError("'continue' outside of a loop", node.line)
 
     def visit_ForStmt(self, node):
         self.symtab.enter_scope()
         self.visit_statement(node.init)
         self.visit(node.condition)
         self.visit_statement(node.increment)
-        self.visit_statement(node.body)
+        self.visit_loop_body(node.body)
         self.symtab.exit_scope()
 
     def visit_ReturnStmt(self, node):

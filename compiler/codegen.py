@@ -25,6 +25,7 @@ class LLVMGenerator:
         self.current_ret_type = None
         self.current_label = None
         self.terminated = False # True once the current basic block has a terminator
+        self.loops = [] # (continue label, break label) for each enclosing loop
 
     def new_reg(self):
         self.reg_count += 1
@@ -306,10 +307,21 @@ class LLVMGenerator:
         self.emit_terminator(f"br i1 {cond_i1}, label %{body_label}, label %{end_label}")
 
         self.emit_label(body_label)
-        self.visit(node.body)
+        self.visit_loop_body(node.body, cond_label, end_label)
         self.emit_terminator(f"br label %{cond_label}")
 
         self.emit_label(end_label)
+
+    def visit_loop_body(self, body, continue_label, break_label):
+        self.loops.append((continue_label, break_label))
+        self.visit(body)
+        self.loops.pop()
+
+    def visit_BreakStmt(self, node):
+        self.emit_terminator(f"br label %{self.loops[-1][1]}")
+
+    def visit_ContinueStmt(self, node):
+        self.emit_terminator(f"br label %{self.loops[-1][0]}")
 
     def visit_ForStmt(self, node):
         self.enter_scope() # a declaration in the init clause is local to the loop
@@ -317,6 +329,7 @@ class LLVMGenerator:
 
         cond_label = self.new_label()
         body_label = self.new_label()
+        next_label = self.new_label()
         end_label = self.new_label()
 
         self.emit_terminator(f"br label %{cond_label}")
@@ -330,7 +343,10 @@ class LLVMGenerator:
             self.emit_terminator(f"br i1 {cond_i1}, label %{body_label}, label %{end_label}")
 
         self.emit_label(body_label)
-        self.visit(node.body)
+        # continue jumps to the increment, not straight back to the condition
+        self.visit_loop_body(node.body, next_label, end_label)
+        self.emit_terminator(f"br label %{next_label}")
+        self.emit_label(next_label)
         self.visit(node.increment)
         self.emit_terminator(f"br label %{cond_label}")
 

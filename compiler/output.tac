@@ -23,13 +23,14 @@ L2:
 j = 0
 L3:
 t5 = j < 5
-if_false t5 goto L4
+if_false t5 goto L5
 t6 = sum + j
 sum = t6
+L4:
 t7 = j + 1
 j = t7
 goto L3
-L4:
+L5:
 return sum
 end_func
 
