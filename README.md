@@ -15,7 +15,7 @@ This document presents the design and implementation of a modular compiler for a
 ### Features Supported
 
 - **Data Types**: `int`, `float`, `double`, and `void` (function return type only), with implicit conversions between numeric types on assignment, arguments, returns and mixed arithmetic
-- **Expressions**: Arithmetic (`+`, `-`, `*`, `/`, `%`), Relational (`==`, `!=`, `<`, `>`, `<=`, `>=`), Logical (`&&`, `||`, `!`) with short-circuit evaluation, prefix and postfix `++` / `--`
+- **Expressions**: Arithmetic (`+`, `-`, `*`, `/`, `%`), Relational (`==`, `!=`, `<`, `>`, `<=`, `>=`), Logical (`&&`, `||`, `!`) with short-circuit evaluation, prefix and postfix `++` / `--`, and assignment with `=`, `+=`, `-=`, `*=`, `/=` and `%=`
 - **Control Flow**: `if-else`, `while`, `for` loops (with a declaration in the init clause, and any clause may be empty), `break` and `continue`
 - **Functions**: Parameter passing, return statements, recursion, `void` functions and `f(void)` parameter lists
 - **Variables**: Block-scoped locals with shadowing, and global variables and arrays with constant initializers
@@ -38,7 +38,8 @@ WhileStmt -> 'while' '(' Expr ')' Stmt
 ForStmt   -> 'for' '(' ( Type ID [ '=' Expr ] ';' | ExprStmt | ';' ) [ Expr ] ';' [ Assign ] ')' Stmt
 ReturnStmt-> 'return' [ Expr ] ';'
 ExprStmt  -> Assign ';'
-Assign    -> ID '=' Assign | ID '[' Expr ']' '=' Assign | Expr
+Assign    -> ID AssignOp Assign | ID '[' Expr ']' AssignOp Assign | Expr
+AssignOp  -> '=' | '+=' | '-=' | '*=' | '/=' | '%='
 Expr      -> LogicalOr
 LogicalOr -> LogicalAnd { '||' LogicalAnd }
 LogicalAnd-> Equality { '&&' Equality }
@@ -63,7 +64,7 @@ Primary   -> NUMBER | ID [ '++' | '--' ] | ID '(' [ Expr { ',' Expr } ] ')' | ID
 
 - Single-dimensional arrays only, with no array initializers.
 - Pointers, structs, `char` and string literals are not supported, so there is no I/O; programs report results through their exit code.
-- No compound assignment (`+=` etc.), `do-while` or `switch`.
+- No `do-while` or `switch`.
 - Floating-point literals need digits before the decimal point (`0.5`, not `.5`) and cannot use exponents (`1e5`).
 - No bounds checking on array accesses.
 

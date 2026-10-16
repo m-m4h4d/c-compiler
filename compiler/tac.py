@@ -123,12 +123,23 @@ class TACGenerator:
 
     def visit_AssignStmt(self, node):
         val = self.visit(node.expr)
+        if node.op:
+            temp = self.new_temp()
+            self.emit(f"{temp} = {node.name} {node.op} {val}")
+            val = temp
         self.emit(f"{node.name} = {val}")
         return node.name
 
     def visit_ArrayAssignStmt(self, node):
+        # The index is evaluated once, even for a compound assignment
         idx_val = self.visit(node.index_expr)
         val = self.visit(node.expr)
+        if node.op:
+            old = self.new_temp()
+            self.emit(f"{old} = {node.name}[{idx_val}]")
+            temp = self.new_temp()
+            self.emit(f"{temp} = {old} {node.op} {val}")
+            val = temp
         self.emit(f"{node.name}[{idx_val}] = {val}")
 
     def visit_BinOp(self, node):

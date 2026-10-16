@@ -9,13 +9,13 @@ int main() {
             continue;
         }
         int is_prime = 1;
-        for (int d = 3; d * d <= n; d = d + 2) {
+        for (int d = 3; d * d <= n; d += 2) {
             if (n % d == 0) {
                 is_prime = 0;
                 break;
             }
         }
-        count = count + is_prime;
+        count += is_prime;
     }
     return count;
 }

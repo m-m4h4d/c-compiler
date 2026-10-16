@@ -165,8 +165,8 @@
       case 'Number': return `Number ${node.value}`;
       case 'Var': return `Var ${node.name}`;
       case 'ArrayAccess': return `ArrayAccess ${node.name}`;
-      case 'AssignStmt': return `AssignStmt ${node.name}`;
-      case 'ArrayAssignStmt': return `ArrayAssignStmt ${node.name}`;
+      case 'AssignStmt': return `AssignStmt ${node.name} ${node.op || ''}=`;
+      case 'ArrayAssignStmt': return `ArrayAssignStmt ${node.name}[] ${node.op || ''}=`;
       case 'FuncCall': return `FuncCall ${node.name}`;
       case 'IncDec': return `IncDec ${node.prefix ? node.op + node.name : node.name + node.op}`;
       default: return node.node;

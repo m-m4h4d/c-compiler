@@ -247,20 +247,26 @@ class LLVMGenerator:
     def visit_AssignStmt(self, node):
         val, val_type = self.visit(node.expr)
         var_info = self.lookup(node.name)
-        val = self.convert(val, val_type, var_info['type'])
-        self.emit_inst(f"store {var_info['type']} {val}, {var_info['type']}* {var_info['ptr']}")
-        return val, var_info['type']
+        return self.store(var_info['ptr'], var_info['type'], val, val_type, node.op)
 
     def visit_ArrayAssignStmt(self, node):
         idx_val, idx_type = self.visit(node.index_expr)
         idx_val = self.convert(idx_val, idx_type, 'i32')
         val, val_type = self.visit(node.expr)
         var_info = self.lookup(node.name)
-        val = self.convert(val, val_type, var_info['type'])
-
+        # The element's address is computed once, even for a compound assignment
         ptr = self.element_ptr(var_info, idx_val)
-        self.emit_inst(f"store {var_info['type']} {val}, {var_info['type']}* {ptr}")
-        return val, var_info['type']
+        return self.store(ptr, var_info['type'], val, val_type, node.op)
+
+    def store(self, ptr, llvm_type, val, val_type, op=None):
+        if op:
+            # x op= e is x = x op e, converted back to x's type
+            old = self.new_reg()
+            self.emit_inst(f"{old} = load {llvm_type}, {llvm_type}* {ptr}")
+            val, val_type = self.binary_op(op, old, llvm_type, val, val_type)
+        val = self.convert(val, val_type, llvm_type)
+        self.emit_inst(f"store {llvm_type} {val}, {llvm_type}* {ptr}")
+        return val, llvm_type
 
     def visit_ReturnStmt(self, node):
         if node.expr:
@@ -385,21 +391,24 @@ class LLVMGenerator:
 
         left_val, left_type = self.visit(node.left)
         right_val, right_type = self.visit(node.right)
+        return self.binary_op(node.op, left_val, left_type, right_val, right_type)
+
+    def binary_op(self, op, left_val, left_type, right_val, right_type):
         op_type = max(left_type, right_type, key=TYPE_RANK.get)
         left_val = self.convert(left_val, left_type, op_type)
         right_val = self.convert(right_val, right_type, op_type)
 
-        if node.op in ICMP_OPS:
+        if op in ICMP_OPS:
             cmp = self.new_reg()
             if op_type == 'i32':
-                self.emit_inst(f"{cmp} = icmp {ICMP_OPS[node.op]} i32 {left_val}, {right_val}")
+                self.emit_inst(f"{cmp} = icmp {ICMP_OPS[op]} i32 {left_val}, {right_val}")
             else:
-                self.emit_inst(f"{cmp} = fcmp {FCMP_OPS[node.op]} {op_type} {left_val}, {right_val}")
+                self.emit_inst(f"{cmp} = fcmp {FCMP_OPS[op]} {op_type} {left_val}, {right_val}")
             return self.i1_to_i32(cmp), 'i32'
 
         res = self.new_reg()
         arith = INT_ARITH if op_type == 'i32' else FLOAT_ARITH
-        self.emit_inst(f"{res} = {arith[node.op]} {op_type} {left_val}, {right_val}")
+        self.emit_inst(f"{res} = {arith[op]} {op_type} {left_val}, {right_val}")
         return res, op_type
 
     def visit_UnaryOp(self, node):

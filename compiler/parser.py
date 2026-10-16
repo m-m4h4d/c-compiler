@@ -198,11 +198,11 @@ class Parser:
         if self.current_token.type == 'ID':
             # Could be assignment, array assignment, or function call
             next_tok = self.lexer.tokens[self.pos + 1]
-            if next_tok.type == 'ASSIGN':
+            if next_tok.type in ('ASSIGN', 'COMPOUND_ASSIGN'):
                 name_tok = self.match('ID')
-                self.match('ASSIGN')
+                op = self.match_assignment()
                 expr = self.parse_assignment_expr()
-                return self.at(AssignStmt(name_tok.value, expr), name_tok.line)
+                return self.at(AssignStmt(name_tok.value, expr, op), name_tok.line)
             elif next_tok.type == 'LBRACKET':
                 # Quick check if it's an assignment to array
                 # Find matching bracket
@@ -212,15 +212,22 @@ class Parser:
                     if self.lexer.tokens[temp_pos].type == 'LBRACKET': brackets += 1
                     elif self.lexer.tokens[temp_pos].type == 'RBRACKET': brackets -= 1
                     temp_pos += 1
-                if temp_pos < len(self.lexer.tokens) and self.lexer.tokens[temp_pos].type == 'ASSIGN':
+                if temp_pos < len(self.lexer.tokens) and self.lexer.tokens[temp_pos].type in ('ASSIGN', 'COMPOUND_ASSIGN'):
                     name_tok = self.match('ID')
                     self.match('LBRACKET')
                     idx = self.parse_expression()
                     self.match('RBRACKET')
-                    self.match('ASSIGN')
+                    op = self.match_assignment()
                     expr = self.parse_assignment_expr()
-                    return self.at(ArrayAssignStmt(name_tok.value, idx, expr), name_tok.line)
+                    return self.at(ArrayAssignStmt(name_tok.value, idx, expr, op), name_tok.line)
         return self.parse_expression()
+
+    def match_assignment(self):
+        # Returns None for '=', or the arithmetic operator of a compound assignment
+        if self.current_token.type == 'COMPOUND_ASSIGN':
+            return self.match('COMPOUND_ASSIGN').value[0]
+        self.match('ASSIGN')
+        return None
 
     def parse_expression(self):
         return self.parse_logical_or()

@@ -42,6 +42,7 @@ class Lexer:
         ('OR',       r'\|\|'),
         ('INC',      r'\+\+'),
         ('DEC',      r'--'),
+        ('COMPOUND_ASSIGN', r'[-+*/%]='),
         ('ASSIGN',   r'='),
         ('LT',       r'<'),
         ('GT',       r'>'),

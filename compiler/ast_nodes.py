@@ -57,15 +57,17 @@ class ContinueStmt(ASTNode):
     pass
 
 class AssignStmt(ASTNode):
-    def __init__(self, name, expr):
+    def __init__(self, name, expr, op=None):
         self.name = name
         self.expr = expr
+        self.op = op # '+', '-', '*', '/' or '%' for compound assignment such as +=
 
 class ArrayAssignStmt(ASTNode):
-    def __init__(self, name, index_expr, expr):
+    def __init__(self, name, index_expr, expr, op=None):
         self.name = name
         self.index_expr = index_expr
         self.expr = expr
+        self.op = op # as for AssignStmt
 
 class BinOp(ASTNode):
     def __init__(self, left, op, right):
